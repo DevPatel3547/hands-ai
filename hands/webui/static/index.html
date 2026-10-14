@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Hands wiring guide</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<a class="skip" href="#step">Skip to the current step</a>
+<header class="top">
+  <div class="brand"><span class="logo" aria-hidden="true">&#9995;</span> Hands <span class="sub">wiring guide</span></div>
+  <div class="prog">
+    <div class="bar" role="progressbar" aria-label="Wiring progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="bar"><span id="barFill"></span></div>
+    <span id="progress" class="muted" aria-live="polite"></span>
+  </div>
+</header>
+
+<div class="banner" role="note">
+  <strong>USB unplugged while you wire.</strong> Low voltage only (the computer's USB port). Never connect anything to mains power or batteries.
+</div>
+
+<main class="layout">
+  <nav class="steps" aria-label="All steps">
+    <details id="stepsBox" open>
+      <summary>All steps</summary>
+      <ol id="list"></ol>
+    </details>
+  </nav>
+
+  <section class="card" id="step" tabindex="-1" aria-labelledby="title">
+    <p class="kind" id="kind"></p>
+    <h1 id="title"></h1>
+    <p class="detail" id="detail"></p>
+    <figure class="diagram">
+      <div id="svg" role="img" aria-labelledby="title"></div>
+      <figcaption class="muted">Yellow = this step. Rows a&ndash;j, columns 1&ndash;63; red (+) and blue (&minus;) rails top and bottom.</figcaption>
+    </figure>
+    <div class="actions">
+      <button type="button" class="secondary" id="prev">&larr; Back</button>
+      <button type="button" class="primary" id="done">Done, next step &rarr;</button>
+    </div>
+    <p class="muted keys">Keyboard: <kbd>&rarr;</kbd> or <kbd>Enter</kbd> = done, <kbd>&larr;</kbd> = back.</p>
+  </section>
+
+  <section class="card" id="check" aria-labelledby="checkTitle">
+    <h2 id="checkTitle">Check the build before power</h2>
+    <div id="photoArea">
+      <p>Take a photo from directly above, in good light, with the whole breadboard in view.</p>
+      <div class="actions">
+        <label class="primary file">
+          <input type="file" id="photoFile" accept="image/jpeg,image/png,image/webp" capture="environment">
+          Upload a photo
+        </label>
+        <button type="button" class="secondary" id="photoBtn">Use the webcam</button>
+      </div>
+    </div>
+    <div id="selfArea" hidden>
+      <p>No vision model is configured, so check each item by eye and tick it:</p>
+      <ul id="selfList" class="checklist"></ul>
+    </div>
+    <div id="photoResult" aria-live="polite"></div>
+  </section>
+
+  <section class="card power" id="power" aria-labelledby="powerTitle">
+    <h2 id="powerTitle">Power on</h2>
+    <div id="powerBlocked" class="danger" role="alert">
+      <p class="big">&#9888; DO NOT plug in USB yet.</p>
+      <ul id="powerReasons"></ul>
+    </div>
+    <div id="powerReady" class="ready" hidden>
+      <p class="big">Ready to plug in.</p>
+      <ul>
+        <li>Plug the Pico's USB cable into the computer.</li>
+        <li><strong>Unplug immediately</strong> if anything gets hot, smells, smokes, or the Pico's LED does not come on.</li>
+        <li>Keep fingers off the board while it is powered. Hands will tell you when to unplug for any change.</li>
+      </ul>
+    </div>
+  </section>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

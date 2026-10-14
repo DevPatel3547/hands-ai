@@ -1,0 +1,64 @@
+# --- Virtual environments and secrets ---
+.venv/
+venv/
+env/
+ENV/
+.python-version
+.env
+.env.*
+
+# --- Python caches ---
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.tox/
+.nox/
+
+# --- Coverage ---
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# --- Build outputs ---
+build/
+dist/
+*.egg-info/
+.eggs/
+*.whl
+
+# --- Generated metrics and reports (re-create with `hands demo` / `hands report`) ---
+metrics/*.jsonl
+/*.jsonl
+study-report.md
+
+# --- Bench output: photos, captures, firmware images ---
+snap_*.jpg
+hands-photos-*/
+*.sr
+*.uf2
+
+# --- Large binaries (keep every committed file under 5 MB) ---
+datasheets/
+*.pdf
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.heic
+
+# --- Editors and OS ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~

@@ -1,0 +1,259 @@
+# Hands starter-kit inventory.
+#
+# This file is the ONLY source of parts the design agent may use. Every number
+# here feeds the deterministic safety checker (hands/rules.py) and the simulator
+# (hands/sim/). Values are typical datasheet / common-module figures; if your
+# physical part differs (e.g. your INA219 clone has a different pin order),
+# edit this file -- the wiring guide is generated from the `pins` order below.
+
+# Limits. These can only be made STRICTER here: hands/safety.py clamps every value to a
+# hard ceiling (sources for each number: docs/safety.md).
+limits:
+  gpio_voltage_v: 3.3          # Pico GPIO are 3.3 V logic; Hands treats them as NOT 5 V tolerant
+  gpio_warn_ma: 8.0            # comfortable per-pin load
+  gpio_max_ma: 12.0            # highest programmable RP2040/RP2350 pad drive strength
+  gpio_total_max_ma: 50.0      # RP2040 total IOVDD current, all GPIO together
+  rail_3v3_max_ma: 300.0       # Pico W datasheet 2.1: keep 3V3(OUT) load under 300 mA
+  vbus_max_ma: 500.0           # what a USB 2.0 port is required to supply
+  resistor_max_w: 0.125        # half the rating of a 1/4 W resistor
+
+parts:
+  pico:
+    kind: mcu
+    name: Raspberry Pi Pico WH (Pico W with pre-soldered headers)
+    qty: 1
+    mount: fixture
+    # GPIO 23, 24, 25 and 29 are used internally by the Pico W (wireless chip,
+    # VSYS sense) and are NOT on the header.
+    internal_gpio: [23, 24, 25, 29]
+    adc_gpio: [26, 27, 28]
+    i2c:
+      I2C0: {sda: [0, 4, 8, 12, 16, 20], scl: [1, 5, 9, 13, 17, 21]}
+      I2C1: {sda: [2, 6, 10, 14, 18, 26], scl: [3, 7, 11, 15, 19, 27]}
+    # Physical header pins 1..40 (USB end = pins 1 and 40)
+    header:
+      1: GP0
+      2: GP1
+      3: GND
+      4: GP2
+      5: GP3
+      6: GP4
+      7: GP5
+      8: GND
+      9: GP6
+      10: GP7
+      11: GP8
+      12: GP9
+      13: GND
+      14: GP10
+      15: GP11
+      16: GP12
+      17: GP13
+      18: GND
+      19: GP14
+      20: GP15
+      21: GP16
+      22: GP17
+      23: GND
+      24: GP18
+      25: GP19
+      26: GP20
+      27: GP21
+      28: GND
+      29: GP22
+      30: RUN
+      31: GP26
+      32: GP27
+      33: AGND
+      34: GP28
+      35: ADC_VREF
+      36: 3V3
+      37: 3V3_EN
+      38: GND
+      39: VSYS
+      40: VBUS
+
+  breadboard:
+    kind: breadboard
+    name: 830-point solderless breadboard (63 columns, rows a-j, 2 rail pairs)
+    qty: 1
+    mount: none
+
+  jumpers:
+    kind: jumpers
+    name: male-male jumper wires (assorted)
+    qty: 40
+    mount: none
+
+  led_red:
+    kind: led
+    name: 5 mm red LED
+    qty: 5
+    mount: discrete2
+    vf: 2.0                      # typical forward voltage at 20 mA
+    vf_min: 1.8                  # low end of the range: used for worst-case current
+    i_max_ma: 20
+    pins:
+      - {name: anode, role: anode, hint: "longer leg (+)"}
+      - {name: cathode, role: cathode, hint: "shorter leg (-), flat edge on the rim"}
+
+  led_yellow:
+    kind: led
+    name: 5 mm yellow LED
+    qty: 5
+    mount: discrete2
+    vf: 2.1                      # typical forward voltage at 20 mA
+    vf_min: 1.9                  # low end of the range: used for worst-case current
+    i_max_ma: 20
+    pins:
+      - {name: anode, role: anode, hint: "longer leg (+)"}
+      - {name: cathode, role: cathode, hint: "shorter leg (-), flat edge on the rim"}
+
+  led_green:
+    kind: led
+    name: 5 mm green LED
+    qty: 5
+    mount: discrete2
+    vf: 2.2                      # typical forward voltage at 20 mA
+    vf_min: 1.9                  # low end of the range: used for worst-case current
+    i_max_ma: 20
+    pins:
+      - {name: anode, role: anode, hint: "longer leg (+)"}
+      - {name: cathode, role: cathode, hint: "shorter leg (-), flat edge on the rim"}
+
+  resistor_220:
+    kind: resistor
+    name: 220 ohm resistor (red-red-brown-gold)
+    qty: 10
+    mount: discrete2
+    ohms: 220
+    pins: [{name: "1", role: passive}, {name: "2", role: passive}]
+
+  resistor_1k:
+    kind: resistor
+    name: 1 kohm resistor (brown-black-red-gold)
+    qty: 10
+    mount: discrete2
+    ohms: 1000
+    pins: [{name: "1", role: passive}, {name: "2", role: passive}]
+
+  resistor_10k:
+    kind: resistor
+    name: 10 kohm resistor (brown-black-orange-gold)
+    qty: 10
+    mount: discrete2
+    ohms: 10000
+    pins: [{name: "1", role: passive}, {name: "2", role: passive}]
+
+  buzzer_active:
+    kind: buzzer
+    name: active buzzer, 3-5 V (beeps when DC applied)
+    qty: 2
+    mount: discrete2
+    current_ma: 25          # typical at 3.3 V -> too much for a GPIO pin directly
+    v_min: 3.0
+    v_max: 5.5
+    pins:
+      - {name: plus, role: anode, hint: "longer leg / '+' printed on top"}
+      - {name: minus, role: cathode, hint: "shorter leg"}
+
+  npn:
+    kind: npn
+    name: PN2222A NPN transistor (TO-92)
+    qty: 5
+    mount: discrete3
+    vbe: 0.7
+    ic_max_ma: 600          # derated; onsemi PN2222A datasheet abs. max is 1.0 A
+    # Flat face toward you, legs down: E B C (left to right) for PN2222A.
+    # 2N2222 parts from some vendors are C B E -- check YOUR datasheet.
+    pins:
+      - {name: e, role: emitter, hint: "left leg (flat face toward you)"}
+      - {name: b, role: base, hint: "middle leg"}
+      - {name: c, role: collector, hint: "right leg"}
+
+  button:
+    kind: button
+    name: 6x6 mm tactile push button (4 legs)
+    qty: 4
+    mount: button4
+    # The guide always uses two DIAGONALLY opposite legs: diagonal legs are
+    # always on opposite sides of the switch, whichever way the button is turned.
+    pins: [{name: a, role: passive}, {name: b, role: passive}]
+
+  dht22:
+    kind: dht22
+    name: DHT22 / AM2302 temperature+humidity module (3-pin, on-board pull-up)
+    qty: 1
+    mount: header
+    v_min: 3.3
+    v_max: 6.0
+    current_ma: 1.5
+    pullup_onboard: true
+    pins:
+      - {name: vcc, role: power_in, hint: "'+' or VCC"}
+      - {name: data, role: signal, hint: "'out' or DATA"}
+      - {name: gnd, role: gnd, hint: "'-' or GND"}
+
+  oled:
+    kind: ssd1306
+    name: SSD1306 0.96in 128x64 OLED, I2C (4-pin)
+    qty: 1
+    mount: header
+    v_min: 3.3
+    v_max: 5.0
+    current_ma: 15
+    i2c_addr: 0x3C
+    pullup_onboard: true
+    pullup_ohms: 4700
+    pins:
+      - {name: gnd, role: gnd, hint: "GND"}
+      - {name: vcc, role: power_in, hint: "VCC"}
+      - {name: scl, role: i2c_scl, hint: "SCL / SCK"}
+      - {name: sda, role: i2c_sda, hint: "SDA"}
+
+  ina219:
+    kind: ina219
+    name: INA219 high-side current sensor module (0.1 ohm shunt)
+    qty: 1
+    mount: header
+    v_min: 3.0
+    v_max: 5.5
+    current_ma: 1
+    i2c_addr: 0x40
+    pullup_onboard: true
+    pullup_ohms: 10000
+    shunt_ohms: 0.1
+    # Pin order varies between clones. This is the common 6-pin header order;
+    # change it to match the labels printed on YOUR board.
+    pins:
+      - {name: vcc, role: power_in, hint: "VCC"}
+      - {name: gnd, role: gnd, hint: "GND"}
+      - {name: scl, role: i2c_scl, hint: "SCL"}
+      - {name: sda, role: i2c_sda, hint: "SDA"}
+      - {name: vin_minus, role: shunt_out, hint: "VIN- (load side)"}
+      - {name: vin_plus, role: shunt_in, hint: "VIN+ (supply side)"}
+
+  servo:
+    kind: servo
+    name: SG90 micro servo (5 V, 3-wire)
+    qty: 1
+    mount: offboard
+    v_min: 4.8
+    v_max: 6.0
+    current_idle_ma: 10
+    current_moving_ma: 250    # 100-250 mA while moving
+    current_stall_ma: 650     # measured stall figures range ~360-750 mA; we assume a high value
+    pins:
+      - {name: gnd, role: gnd, hint: "brown wire"}
+      - {name: vplus, role: power_in, hint: "red wire"}
+      - {name: sig, role: signal, hint: "orange wire"}
+
+instruments:
+  logic_analyzer:
+    name: 8-channel 24 MHz USB logic analyzer (Cypress FX2, sigrok 'fx2lafw' driver)
+    qty: 1
+    channels: 8
+    threshold_v: 1.4
+  webcam:
+    name: USB webcam (any UVC 720p/1080p) or a phone photo
+    qty: 1

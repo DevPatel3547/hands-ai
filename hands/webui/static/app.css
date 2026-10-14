@@ -1,0 +1,87 @@
+:root {
+  --bg: #f7f5f0; --fg: #1b1b19; --muted: #5d5c56; --card: #ffffff; --line: #d9d6cc;
+  --accent: #b8860b; --accent-ink: #1b1b19; --ok: #1e6b2a; --ok-bg: #e5f3e7; --bad: #b3261e; --bad-bg: #fdeceb;
+  --board: #ecebe4; --hole: #a9a698; --rp: #c94a3f; --rn: #3466b0; --pico: #2f6b3a; --part: #8a6d3b; --wire: #4d4d4d;
+  --focus: #1a73e8;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141412; --fg: #efede7; --muted: #a8a69e; --card: #1e1e1b; --line: #3a3934;
+    --accent: #f0b429; --ok: #7bd389; --ok-bg: #16301b; --bad: #ff8a80; --bad-bg: #3a1714;
+    --board: #2a2925; --hole: #6b6960; --part: #d6b47a; --wire: #c9c7bf; --focus: #8ab4f8;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; font: 17px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--fg); }
+.skip { position: absolute; left: -999px; top: 0; background: var(--card); padding: 8px 12px; z-index: 10; }
+.skip:focus { left: 8px; top: 8px; }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.muted { color: var(--muted); }
+.top { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center;
+       justify-content: space-between; padding: 10px 16px; background: var(--bg); border-bottom: 1px solid var(--line); }
+.brand { font-weight: 700; font-size: 19px; }
+.brand .sub { font-weight: 400; color: var(--muted); }
+.prog { display: flex; align-items: center; gap: 10px; flex: 1 1 220px; max-width: 520px; }
+.bar { flex: 1; height: 10px; border-radius: 6px; background: var(--line); overflow: hidden; }
+.bar span { display: block; height: 100%; width: 0; background: var(--ok); transition: width .2s; }
+.banner { margin: 12px 16px 0; padding: 10px 14px; border-left: 5px solid var(--bad); background: var(--bad-bg); border-radius: 6px; font-size: 15px; }
+.layout { max-width: 1180px; margin: 0 auto; padding: 16px; display: grid; gap: 16px;
+          grid-template-columns: 280px minmax(0, 1fr); grid-template-areas: "steps step" "steps check" "steps power"; }
+.steps { grid-area: steps; } #step { grid-area: step; } #check { grid-area: check; } #power { grid-area: power; }
+@media (max-width: 860px) {
+  .layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "step" "check" "power" "steps"; padding: 12px; }
+  body { font-size: 18px; }
+}
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+.steps details { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 8px; }
+.steps summary { cursor: pointer; font-weight: 600; padding: 6px 8px; min-height: 44px; display: flex; align-items: center; }
+#list { list-style: none; margin: 0; padding: 0; max-height: 70vh; overflow: auto; }
+#list button { all: unset; box-sizing: border-box; display: block; width: 100%; padding: 8px 10px; border-radius: 8px;
+               cursor: pointer; font-size: 15px; color: var(--muted); min-height: 40px; }
+#list button:focus-visible { outline: 3px solid var(--focus); }
+#list .done button { color: var(--ok); }
+#list .done button::before { content: "\2713  "; }
+#list [aria-current="step"] button { background: var(--bg); color: var(--fg); font-weight: 650; }
+.kind { margin: 0; text-transform: uppercase; font-size: 13px; letter-spacing: .08em; color: var(--accent); font-weight: 700; }
+h1 { font-size: clamp(22px, 4vw, 28px); line-height: 1.25; margin: 4px 0 8px; overflow-wrap: anywhere; }
+h2 { font-size: 21px; margin: 0 0 8px; }
+.detail { font-size: 1.1em; overflow-wrap: anywhere; }
+.diagram { margin: 12px 0; }
+.diagram figcaption { font-size: 14px; }
+#svg { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 8px; }
+#svg svg { display: block; width: 100%; min-width: 640px; height: auto; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+button, .file { font: inherit; min-height: 48px; padding: 10px 18px; border-radius: 10px; border: 0; cursor: pointer;
+                display: inline-flex; align-items: center; justify-content: center; }
+.primary { background: var(--accent); color: var(--accent-ink); font-weight: 700; }
+.secondary { background: transparent; border: 2px solid var(--muted); color: var(--fg); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+.file input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.file:focus-within { outline: 3px solid var(--focus); outline-offset: 2px; }
+.keys { font-size: 14px; margin-bottom: 0; }
+@media (max-width: 860px) {
+  #step .actions { position: sticky; bottom: 0; background: var(--card); padding: 10px 0 calc(10px + env(safe-area-inset-bottom)); }
+  #step .actions button { flex: 1; }
+  .keys { display: none; }
+}
+.checklist { list-style: none; padding: 0; margin: 0; }
+.checklist label { display: flex; gap: 12px; align-items: flex-start; padding: 8px 0; min-height: 44px; }
+.checklist input { width: 24px; height: 24px; flex: none; margin-top: 2px; }
+.bad { color: var(--bad); } .ok { color: var(--ok); font-weight: 650; }
+#photoResult ul { padding-left: 20px; }
+.power .big { font-size: 24px; font-weight: 800; margin: 0 0 6px; }
+.danger { background: var(--bad-bg); border: 3px solid var(--bad); border-radius: 10px; padding: 12px 16px; color: var(--fg); }
+.danger .big { color: var(--bad); }
+.ready { background: var(--ok-bg); border: 3px solid var(--ok); border-radius: 10px; padding: 12px 16px; }
+.ready .big { color: var(--ok); }
+kbd { border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-size: 13px; }
+/* breadboard SVG */
+.bb .board { fill: var(--board); } .bb .hole { fill: var(--hole); } .bb .rp { fill: var(--rp); } .bb .rn { fill: var(--rn); }
+.bb .lbl { font: 9px ui-monospace, monospace; fill: var(--muted); } .bb .plbl { font: 10px system-ui, sans-serif; fill: var(--fg); }
+.bb .pico { fill: var(--pico); opacity: .35; }
+.bb .part { stroke: var(--part); stroke-width: 4; } .bb .leg { fill: var(--part); }
+.bb .wire { fill: none; stroke: var(--wire); stroke-width: 2.5; opacity: .7; }
+.bb .cur { stroke: var(--accent) !important; fill: var(--accent); stroke-width: 5; opacity: 1; }
+.bb path.cur { fill: none; }
+@media (prefers-reduced-motion: reduce) { .bar span { transition: none; } }
