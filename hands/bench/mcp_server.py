@@ -32,7 +32,7 @@ def _server_cls():
 
         return MCPServer
     except ImportError:
-        from mcp.server.fastmcp import FastMCP  # mcp 1.x
+        from mcp.server.fastmcp import FastMCP  # type: ignore[attr-defined,unused-ignore]  # mcp 1.x
 
         return FastMCP
 

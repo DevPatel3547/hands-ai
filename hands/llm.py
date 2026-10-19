@@ -75,13 +75,15 @@ class AnthropicClient:
     def __init__(
         self, model: str | None = None, api_key: str | None = None, timeout: float = 120.0, max_retries: int = 3
     ):
+        # Check the key before the SDK import so a missing key is reported the same way whether or not
+        # the optional `anthropic` package is installed (the sim and CI never install it).
+        key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+        if not key:
+            raise LLMError("ANTHROPIC_API_KEY is not set (or use --model ollama for a free local model)")
         try:
             import anthropic  # imported lazily so the sim never needs it
         except ImportError as e:  # pragma: no cover - depends on the environment
             raise LLMError("the Anthropic adapter needs `pip install 'hands[llm]'`") from e
-        key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-        if not key:
-            raise LLMError("ANTHROPIC_API_KEY is not set (or use --model ollama for a free local model)")
         self.client = anthropic.Anthropic(api_key=key, timeout=timeout, max_retries=max_retries)
         self.model = model or DEFAULT_MODEL
         self.calls: list[LLMCall] = []
