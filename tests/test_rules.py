@@ -5,6 +5,7 @@ import pytest
 from hands.circuit import Design
 from hands.inventory import load_inventory
 from hands.rules import check_design
+from hands.sim.spice_models import led_current
 
 from .conftest import mk
 
@@ -27,8 +28,9 @@ def test_final_gadget_designs_pass(inv, gadgets, gid):
 def test_led_with_resistor_ok_and_current_estimate(inv):
     rep = check_design(mk(**LED_OK), inv)
     assert rep.ok
-    # worst case uses the LED's minimum forward voltage (1.8 V for red)
-    assert rep.gpio_current_ma["GP15"] == pytest.approx((3.3 - 1.8) / 220 * 1000, rel=1e-3)
+    # worst case: IOVDD at 3.4 V, resistor at -5 %, LED model fitted to its minimum Vf (1.8 V for red)
+    assert rep.gpio_current_ma["GP15"] == pytest.approx(led_current(3.4, 220 * 0.95, 1.8) * 1000, abs=0.01)
+    assert rep.gpio_current_ma["GP15"] > (3.3 - 1.8) / 220 * 1000  # stricter than the old nominal estimate
 
 
 def test_led_without_resistor(inv):
@@ -57,7 +59,7 @@ def test_two_gpios_tied(inv):
 def test_buzzer_on_gpio_exceeds_current(inv, gadgets):
     rep = check_design(Design.from_dict(gadgets["steelers"].designs[0]), inv)
     assert [f.rule for f in rep.errors] == ["gpio_current"]
-    assert "25" in rep.errors[0].message
+    assert "buzzer directly on pin ~26 mA" in rep.errors[0].message  # 25 mA rated, ~26 mA at IOVDD max
 
 
 def test_transistor_base_without_resistor(inv):
