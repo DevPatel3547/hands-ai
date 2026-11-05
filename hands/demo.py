@@ -13,6 +13,7 @@ from .human import ConsoleHuman
 from .inventory import load_inventory
 from .llm import LLMClient, make_client, parse_model_spec
 from .metrics import DEFAULT_LOG, Metrics
+from .sim.board import SimEnv
 from .sim.build import Build
 from .sim.human import SimHuman
 from .vision import ConsoleVision, ModelVision, SimVision, Vision
@@ -36,25 +37,31 @@ def run_sim_demo(
     participant: str = "",
 ) -> RunResult:
     gadgets = registry()
-    if gadget_id not in gadgets:
-        raise SystemExit(f"unknown gadget {gadget_id!r}; choose from {sorted(gadgets)}")
-    g = gadgets[gadget_id]
-    inv = load_inventory(inventory_path)
-    faults = g.default_faults if faults is None else faults
     if live_llm:
         model = "anthropic"
+    provider = parse_model_spec(model)[0]
+    g = gadgets.get(gadget_id)
+    if g is None and provider == "scripted":
+        raise SystemExit(
+            f"unknown gadget {gadget_id!r}; choose from {sorted(gadgets)}, or pass a one-sentence spec "
+            "with a real model (--model anthropic | ollama[:MODEL])"
+        )
+    inv = load_inventory(inventory_path)
+    spec = g.spec if g else gadget_id
+    faults = (g.default_faults if g else []) if faults is None else faults
     llm = _client(model, gadget_id, base_url)
-    bench = SimBench(inv, Build(), g.env, vision_miss=set(vision_miss or ()))
+    bench = SimBench(inv, Build(), g.env if g else SimEnv(), vision_miss=set(vision_miss or ()))
     human = SimHuman(bench, faults, log=log)
-    metrics = Metrics(metrics_path, gadget=g.id, mode=f"sim+{parse_model_spec(model)[0]}", participant=participant)
-    log(f"#### Hands demo: {g.title}  [simulated bench; model: {model}]")
+    metrics = Metrics(metrics_path, gadget=g.id if g else "custom", mode=f"sim+{provider}", participant=participant)
+    label = "SCRIPTED model (canned replies, not model quality)" if provider == "scripted" else f"model: {model}"
+    log(f"#### Hands demo: {g.title if g else spec}  [simulated bench; {label}]")
     log(
         f"#### Injected human mistakes: {', '.join(faults) or 'none'}"
         + (f"; camera will miss: {', '.join(vision_miss)}" if vision_miss else "")
     )
-    eng = Engineer(inv, llm, bench, human, SimVision(), metrics, log=log, protocol=g.protocol)
-    res = eng.run(g.spec)
-    if res.success and g.after_demo:
+    eng = Engineer(inv, llm, bench, human, SimVision(), metrics, log=log, protocol=g.protocol if g else "none")
+    res = eng.run(spec)
+    if res.success and g is not None and g.after_demo:
         g.after_demo(bench, log, res.layout)
     m = res.metrics
     log("\n#### Metrics")

@@ -36,6 +36,17 @@ from .base import BenchError, ChannelTrace, CurrentReading, LogicCapture, Snapsh
 
 Runner = Callable[[list[str], float], str]
 
+
+def _optional_module(name: str) -> Any:
+    """Import an optional dependency, or return None when it is not installed."""
+    import importlib
+
+    try:
+        return importlib.import_module(name)
+    except ImportError:
+        return None
+
+
 RPI_VID = 0x2E8A
 PICO_SERIAL_PIDS = {0x0005: "MicroPython", 0x000A: "Pico SDK serial", 0x0009: "CircuitPython"}
 BOOTSEL_LABELS = ("RPI-RP2", "RP2350")
@@ -511,10 +522,7 @@ class RealBench:
         path = self.workdir / f"snap_{int(time.time() * 1000)}.jpg"
         if self.camera == "prompt":
             return Snapshot(time.time(), str(self._prompt_photo()), None, {"source": "phone"})
-        try:
-            import cv2
-        except ImportError:
-            cv2 = None
+        cv2: Any = _optional_module("cv2")
         if cv2 is not None:
             cap = cv2.VideoCapture(self.camera)
             try:

@@ -47,6 +47,8 @@ def _load_design(arg: str, first: bool) -> Any:
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="hands", description="Hands: an AI hardware engineer that uses you as its hands.")
     ap.add_argument("--version", action="version", version=f"hands {__version__}")
+    ap.add_argument("--debug", action="store_true", help="debug logging on stderr and full tracebacks on errors")
+    ap.add_argument("--log-json", metavar="FILE", help="append structured JSON log records to FILE (or HANDS_LOG_JSON)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     def model_args(p: argparse.ArgumentParser) -> None:
@@ -130,16 +132,77 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("faults", help="list injectable simulated mistakes")
     sub.add_parser("inventory", help="show the parts inventory")
     sub.add_parser("rules", help="list the safety rules and the hard limits")
+    _register_plugins(sub)
     return ap
+
+
+# Optional command modules (hands/commands/<name>.py), each exposing ``register(sub)`` and setting
+# ``func`` on its parsers via ``set_defaults(func=...)``. A module whose optional dependencies are
+# missing is skipped; ``hands --debug`` says why.
+PLUGIN_MODULES = ("twin", "vision")
+_PLUGIN_ERRORS: dict[str, str] = {}
+
+
+def _register_plugins(sub: Any) -> None:
+    import importlib
+
+    for name in PLUGIN_MODULES:
+        try:
+            mod = importlib.import_module(f"hands.commands.{name}")
+        except ImportError as e:
+            _PLUGIN_ERRORS[name] = f"{type(e).__name__}: {e}"
+            continue
+        mod.register(sub)
+
+
+def _hint_for(e: BaseException) -> str:
+    """A one-line next step for the errors a user can hit without a bug in Hands."""
+    name = type(e).__name__
+    msg = str(e)
+    if name == "LLMError":
+        if "ANTHROPIC_API_KEY" in msg:
+            return "export ANTHROPIC_API_KEY=... (never paste it into a file in the repo), or use --model ollama"
+        return "run `hands doctor` to check the model setup"
+    if name == "BenchError":
+        return "run `hands doctor --real`; unplug the Pico if anything is warm"
+    if name in ("SafetyRefusal", "UnsafeDesignError"):
+        return "Hands only builds low-voltage USB-powered circuits from the starter kit (see docs/safety.md)"
+    if name in ("DesignError", "InventoryError", "LayoutError"):
+        return "check the design JSON / starter_kit.yaml; `hands check <design>` shows the rule findings"
+    if isinstance(e, FileNotFoundError):
+        return "check the path"
+    return "re-run with --debug for the full traceback"
 
 
 def main(argv: list[str] | None = None) -> int:
     a = build_parser().parse_args(argv)
+    from .log import get_logger, redact, setup
+
+    setup(debug=a.debug, json_path=a.log_json)
+    logger = get_logger("cli")
+    logger.debug("hands %s: %s", __version__, a.cmd, extra={"data": {"argv": sys.argv[1:] if argv is None else argv}})
+    for name, why in _PLUGIN_ERRORS.items():
+        logger.debug("optional commands %r not loaded: %s", name, why)
     try:
-        return _dispatch(a)
+        func = getattr(a, "func", None)
+        return int(func(a)) if callable(func) else _dispatch(a)
     except KeyboardInterrupt:
         print("\nStopped. If the Pico is plugged in and you were mid-change, unplug it now.")
         return 130
+    except SystemExit:
+        raise
+    except BrokenPipeError:  # e.g. `hands rules | head`
+        import os
+
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        return 141
+    except Exception as e:
+        if a.debug:
+            raise
+        logger.debug("command failed: %s: %s", type(e).__name__, e, exc_info=True)
+        print(f"error: {redact(str(e)) or type(e).__name__}", file=sys.stderr)
+        print(f"hint: {_hint_for(e)}", file=sys.stderr)
+        return 2
 
 
 def _dispatch(a: argparse.Namespace) -> int:

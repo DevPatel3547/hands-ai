@@ -55,6 +55,17 @@ datasheets/
 *.mkv
 *.heic
 
+# --- Node (RP2040 emulator bridge) and downloaded firmware caches ---
+node_modules/
+.cache/
+.hands-cache/
+
+# --- Internal agent notes never belong in this public repo ---
+PROGRESS.md
+TEAM.md
+RECAP.md
+.claude/
+
 # --- Editors and OS ---
 .DS_Store
 Thumbs.db

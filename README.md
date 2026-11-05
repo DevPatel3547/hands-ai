@@ -2,9 +2,7 @@
 
 **An AI hardware engineer that uses a non-expert human as its hands.**
 
-[![CI](https://github.com/DevPatel3547/hands/actions/workflows/ci.yml/badge.svg)](https://github.com/DevPatel3547/hands/actions/workflows/ci.yml)
-![tests](https://img.shields.io/badge/tests-178%20passing-brightgreen)
-![coverage](https://img.shields.io/badge/branch%20coverage-89%25-brightgreen)
+[![CI](https://github.com/DevPatel3547/hands-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/DevPatel3547/hands-ai/actions/workflows/ci.yml)
 ![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
@@ -25,7 +23,9 @@ checks; the person acts; instruments verify.
    camera) and, when something fails, **debug it** with the person, one step at a time.
 
 ```bash
-pip install -e . && hands demo steelers --sim    # no hardware, no API key, no money
+pipx install "git+https://github.com/DevPatel3547/hands-ai" && hands demo steelers --sim
+# or: uv tool install "git+https://github.com/DevPatel3547/hands-ai"
+# no hardware, no API key, no money. macOS (Apple Silicon or Intel), Linux and Windows.
 ```
 
 ---
@@ -267,7 +267,7 @@ you rely on it.
 No hardware, no API key, no money. Python 3.11+.
 
 ```bash
-git clone https://github.com/DevPatel3547/hands.git && cd hands
+git clone https://github.com/DevPatel3547/hands-ai.git && cd hands-ai
 python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 

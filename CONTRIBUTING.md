@@ -6,7 +6,7 @@ for safety-related changes is high and explicit.
 ## Setup
 
 ```bash
-git clone https://github.com/DevPatel3547/hands.git && cd hands
+git clone https://github.com/DevPatel3547/hands-ai.git && cd hands-ai
 python -m venv .venv && . .venv/bin/activate
 make install            # pip install -e ".[dev,mcp]"
 make check              # ruff + mypy + pytest with the 85% coverage gate: what CI runs
@@ -51,5 +51,5 @@ fake servers cover everything in CI.
 ## Reporting a safety problem
 
 If you find a way to get Hands to produce a wiring step or power-on for an unsafe circuit,
-please open an issue on [DevPatel3547/hands](https://github.com/DevPatel3547/hands/issues) titled
+please open an issue on [DevPatel3547/hands-ai](https://github.com/DevPatel3547/hands-ai/issues) titled
 `safety:` with the design JSON and the command you ran, or contact the maintainer directly. These reports get top priority.
