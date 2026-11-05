@@ -103,9 +103,9 @@ def doctor_check() -> Check:
 
     path = find_ngspice()
     if path:
-        return Check("spice", "ngspice (SPICE checks)", OK, f"{ngspice_version(path)} at {path}")
+        return Check("optional", "ngspice (SPICE checks)", OK, f"{ngspice_version(path)} at {path}")
     return Check(
-        "spice",
+        "optional",
         "ngspice (SPICE checks)",
         WARN,
         "not found: `hands spice` and the SPICE soundness tests are unavailable (rules still run)",
