@@ -23,9 +23,9 @@ jobs:
           cache: pip
       - run: pip install -e ".[dev]"
       - name: ruff (lint)
-        run: ruff check hands tests
+        run: ruff check hands tests scripts
       - name: ruff (format)
-        run: ruff format --check hands tests
+        run: ruff format --check hands tests scripts
 
   typecheck:
     runs-on: ubuntu-latest
@@ -56,7 +56,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-      - run: pip install -e ".[dev,mcp]"
+      - run: pip install -e ".[dev,mcp,llm]"
       - name: pytest (coverage gate 85%)
         run: pytest --cov=hands --cov-report=term-missing:skip-covered --cov-report=xml
       - name: sim demos + study report
@@ -77,3 +77,16 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker build -t hands-sim .
       - run: docker run --rm hands-sim
+
+  live-path-fake:
+    # The live Claude code path end to end against a local fake Messages API (no key, no network).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dev,llm]"
+      - run: python scripts/demo_live_fake.py steelers
+      - run: hands doctor --live || test $? -eq 1   # no key in CI: must report it cleanly, not crash

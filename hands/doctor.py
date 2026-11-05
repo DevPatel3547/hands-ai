@@ -61,13 +61,122 @@ class Env:
     http_get: Callable[[str, float], bytes] = lambda url, t: urllib.request.urlopen(url, timeout=t).read()  # noqa: S310
     environ: dict[str, str] = field(default_factory=lambda: dict(os.environ))
     python: tuple[int, int] = (sys.version_info.major, sys.version_info.minor)
+    system: str = field(default_factory=platform.system)
+    machine: str = field(default_factory=platform.machine)
+    # Verifies an Anthropic key with a free model-list call; returns the model ids it can see.
+    list_models: Callable[[str, str | None], list[str]] | None = None
 
 
-def run_checks(env: Env | None = None, *, mode: str = "all", port: str = "auto") -> list[Check]:
-    """mode: ``sim`` (only what the simulator needs), ``real`` or ``all``."""
+def _anthropic_models(key: str, base_url: str | None) -> list[str]:
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=key, base_url=base_url, timeout=15.0, max_retries=1)
+    return [m.id for m in client.models.list(limit=100).data]
+
+
+def _plugin_checks() -> list[Check]:
+    """Checks contributed by optional subsystems (RP2040 emulator, ngspice, camera CV), if installed."""
+    import importlib
+
+    out: list[Check] = []
+    for mod, attr in (
+        ("hands.emu", "doctor_checks"),
+        ("hands.sim.spice", "doctor_check"),
+        ("hands.cv", "doctor_check"),
+    ):
+        try:
+            fn = getattr(importlib.import_module(mod), attr)
+        except (ImportError, AttributeError):
+            continue
+        try:
+            res = fn()
+        except Exception as e:  # noqa: BLE001 - a broken optional check must not break doctor
+            out.append(Check("twin", f"{mod}.{attr}", WARN, f"check failed: {e}"[:160]))
+            continue
+        out.extend(res if isinstance(res, list) else [res])
+    return out
+
+
+def _live_checks(env: Env, add: Callable[[Check], None], required: bool) -> None:
+    from .llm import DEFAULT_MODEL
+
+    has_sdk = env.has_module("anthropic")
+    key = env.environ.get("ANTHROPIC_API_KEY", "")
+    add(Check("model", "anthropic SDK", OK if has_sdk else MISSING, "", "pip install 'hands[llm]'", required=required))
+    if not key:
+        add(
+            Check(
+                "model",
+                "ANTHROPIC_API_KEY",
+                MISSING,
+                "not set in this shell",
+                "export ANTHROPIC_API_KEY=... in your shell (zsh: add it to ~/.zshrc); never put it in the repo",
+                required=required,
+            )
+        )
+        return
+    shape = key.startswith("sk-ant-") and len(key) > 20
+    add(
+        Check(
+            "model",
+            "ANTHROPIC_API_KEY",
+            OK if shape else WARN,
+            f"set ({len(key)} characters; value not shown)",
+            "" if shape else "Anthropic keys start with sk-ant-; check for a stray quote or space",
+        )
+    )
+    if not has_sdk:
+        return
+    lister = env.list_models or _anthropic_models
+    base = env.environ.get("ANTHROPIC_BASE_URL") or None
+    try:
+        ids = lister(key, base)
+    except Exception as e:  # noqa: BLE001 - report any failure as a fix to make
+        from .log import redact
+
+        add(
+            Check(
+                "model",
+                "key works (free model-list call)",
+                MISSING,
+                redact(str(e))[:160],
+                "check the key",
+                required=required,
+            )
+        )
+        return
+    add(Check("model", "key works (free model-list call)", OK, f"{len(ids)} models visible", required=required))
+    model = env.environ.get("HANDS_MODEL") or DEFAULT_MODEL
+    add(
+        Check(
+            "model",
+            f"model {model}",
+            OK if model in ids else WARN,
+            "" if model in ids else "not in this key's model list",
+            "" if model in ids else f"set HANDS_MODEL to one of: {', '.join(ids[:5])}",
+        )
+    )
+
+
+def run_checks(env: Env | None = None, *, mode: str = "all", port: str = "auto", plugins: bool = True) -> list[Check]:
+    """mode: ``sim`` (only what the simulator needs), ``live`` (a real Claude run), ``real`` or ``all``."""
     env = env or Env()
     out: list[Check] = []
     add = out.append
+    arch = "Apple Silicon" if env.system == "Darwin" and env.machine == "arm64" else env.machine
+    os_name = {"Darwin": "macOS"}.get(env.system, env.system)
+    add(Check("core", "platform", OK, f"{os_name} {arch}".strip()))
+    if env.system == "Darwin":
+        brew = env.which("brew")
+        add(
+            Check(
+                "core",
+                "Homebrew (for optional tools)",
+                OK if brew else SKIP,
+                brew or "",
+                '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"',
+            )
+        )
 
     py_ok = env.python >= (3, 11)
     add(
@@ -76,7 +185,7 @@ def run_checks(env: Env | None = None, *, mode: str = "all", port: str = "auto")
             "Python >= 3.11",
             OK if py_ok else MISSING,
             ".".join(map(str, env.python)),
-            "install Python 3.11+ from https://www.python.org/downloads/",
+            "macOS: brew install python@3.12 (or python.org); then use a venv, pipx or uv",
             required=True,
         )
     )
@@ -90,6 +199,12 @@ def run_checks(env: Env | None = None, *, mode: str = "all", port: str = "auto")
             "pip install 'hands[mcp]'",
         )
     )
+
+    if plugins:
+        out.extend(_plugin_checks())
+    if mode == "live":
+        _live_checks(env, add, required=True)
+        return out
 
     # ---- models (all optional: the scripted model needs nothing)
     if env.has_module("anthropic") and env.environ.get("ANTHROPIC_API_KEY"):
@@ -232,7 +347,7 @@ def run_checks(env: Env | None = None, *, mode: str = "all", port: str = "auto")
             install_hint("uhubctl"),
         )
     )
-    if platform.system() == "Linux" and env.environ.get("USER") not in (None, "root") and req and not pico:
+    if env.system == "Linux" and env.environ.get("USER") not in (None, "root") and req and not pico:
         add(Check("bench", "serial port permission", WARN, "", "sudo usermod -aG dialout $USER, then log out/in"))
     return out
 

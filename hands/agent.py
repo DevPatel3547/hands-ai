@@ -248,6 +248,13 @@ def fix_instruction(fix: dict[str, Any], layout: Layout) -> str:
 # ------------------------------------------------------------------ engineer ---
 
 
+def model_source(llm: Any) -> str:
+    """'scripted' (canned replies), 'replay' (a recorded real session) or 'live' (a model was called)."""
+    inner = getattr(llm, "inner", llm)
+    name = type(inner).__name__
+    return "scripted" if name == "ScriptedClient" else "replay" if name == "ReplayClient" else "live"
+
+
 class Engineer:
     def __init__(
         self,
@@ -356,6 +363,9 @@ class Engineer:
             "firmware_versions": int(c["firmware_versions"]),
             "firmware_lint_rejections": int(c["firmware_lint_rejections"]),
             "llm_calls": len(self.llm.calls),
+            "model_source": model_source(self.llm),
+            "input_tokens": sum(getattr(x, "input_tokens", 0) for x in self.llm.calls),
+            "output_tokens": sum(getattr(x, "output_tokens", 0) for x in self.llm.calls),
             "wiring_steps": len(self.guide.steps) if self.guide else 0,
             "tests_passed": sum(r.passed for r in results),
             "tests_total": len(results),

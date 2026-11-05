@@ -11,7 +11,7 @@ from .bench.sim_bench import SimBench
 from .gadgets import registry
 from .human import ConsoleHuman
 from .inventory import load_inventory
-from .llm import LLMClient, make_client, parse_model_spec
+from .llm import LLMClient, ReplayClient, make_client, parse_model_spec
 from .metrics import DEFAULT_LOG, Metrics
 from .sim.board import SimEnv
 from .sim.build import Build
@@ -19,9 +19,21 @@ from .sim.human import SimHuman
 from .vision import ConsoleVision, ModelVision, SimVision, Vision
 
 
-def _client(model: str, gadget_id: str | None, base_url: str | None) -> LLMClient:
+def _client(model: str, gadget_id: str | None, base_url: str | None, record: str | Path | None = None) -> LLMClient:
     g = registry().get(gadget_id or "")
-    return make_client(model, scripted=g.scripted_client() if g else None, base_url=base_url)
+    return make_client(model, scripted=g.scripted_client() if g else None, base_url=base_url, record=record)
+
+
+def model_label(model: str, llm: LLMClient) -> str:
+    provider = parse_model_spec(model)[0]
+    if provider == "scripted":
+        return "SCRIPTED model (canned replies, not model quality)"
+    if isinstance(llm, ReplayClient):
+        return llm.label + " (no model is called)"
+    inner = getattr(llm, "inner", llm)
+    where = getattr(inner, "base_url", None)
+    via = f" via {where}" if where and "api.anthropic.com" not in where else ""
+    return f"LIVE model: {getattr(inner, 'model', model)}{via}"
 
 
 def run_sim_demo(
@@ -35,6 +47,7 @@ def run_sim_demo(
     model: str = "scripted",
     base_url: str | None = None,
     participant: str = "",
+    record: str | Path | None = None,
 ) -> RunResult:
     gadgets = registry()
     if live_llm:
@@ -49,11 +62,13 @@ def run_sim_demo(
     inv = load_inventory(inventory_path)
     spec = g.spec if g else gadget_id
     faults = (g.default_faults if g else []) if faults is None else faults
-    llm = _client(model, gadget_id, base_url)
+    llm = _client(model, gadget_id, base_url, record)
     bench = SimBench(inv, Build(), g.env if g else SimEnv(), vision_miss=set(vision_miss or ()))
     human = SimHuman(bench, faults, log=log)
     metrics = Metrics(metrics_path, gadget=g.id if g else "custom", mode=f"sim+{provider}", participant=participant)
-    label = "SCRIPTED model (canned replies, not model quality)" if provider == "scripted" else f"model: {model}"
+    if record:
+        log(f"#### Recording every model reply to {record}")
+    label = model_label(model, llm)
     log(f"#### Hands demo: {g.title if g else spec}  [simulated bench; {label}]")
     log(
         f"#### Injected human mistakes: {', '.join(faults) or 'none'}"
@@ -106,6 +121,7 @@ def run_real(
     log: Callable[[str], None] = print,
     ask: Callable[[str], str] = input,
     bench: Any = None,
+    record: str | Path | None = None,
 ) -> RunResult:
     """Full loop on real hardware: a person at the terminal is the hands."""
     from .bench.real_bench import RealBench
@@ -116,7 +132,7 @@ def run_real(
     provider, _ = parse_model_spec(model)
     if provider == "scripted" and g is None:
         raise SystemExit("free-form specs need a real model: --model ollama[:MODEL] (free, local) or --model anthropic")
-    llm = _client(model, target, base_url)
+    llm = _client(model, target, base_url, record)
     inv = load_inventory()
     bench = bench or RealBench(port=port, camera=camera, uhubctl=uhubctl)
     human = ConsoleHuman(bench, input_fn=ask, print_fn=log)
@@ -128,7 +144,7 @@ def run_real(
         vision = ConsoleVision(ask)
     metrics = Metrics(metrics_path, gadget=g.id if g else "custom", mode=f"real+{provider}", participant=participant)
     log(
-        f"#### Hands: {g.title if g else spec}  [REAL bench; model: {model}; "
+        f"#### Hands: {g.title if g else spec}  [REAL bench; {model_label(model, llm)}; "
         f"camera: {'model vision' if vm else 'you answer questions'}]"
     )
     log("#### Low voltage only. Wire with USB unplugged. If anything gets hot or smells, unplug immediately.")

@@ -346,7 +346,7 @@ def test_cli_surface(tmp_path, capsys, monkeypatch):
     assert main(["doctor", "--sim"]) == 0
     assert "core" in capsys.readouterr().out
     assert main(["doctor", "--sim", "--json"]) == 0
-    assert json.loads(capsys.readouterr().out)[0]["name"].startswith("Python")
+    assert any(c["name"].startswith("Python") for c in json.loads(capsys.readouterr().out))
     assert main(["bridge", "--feed", "mock"]) == 0
     assert "SCORE 7 17" in capsys.readouterr().out
     with pytest.raises(SystemExit):

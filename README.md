@@ -36,7 +36,7 @@ pipx install "git+https://github.com/DevPatel3547/hands-ai" && hands demo steele
 > |---|---|
 > | **Works today** | The full loop runs end to end on a **simulated bench**: circuit solver, as-built breadboard, MicroPython runtime and a simulated person who makes realistic mistakes. **178 tests pass** (89% branch coverage). All **7 injectable wiring mistakes** are caught and fixed in tests, before or after power-on. |
 > | **Built, not yet proven** | The real-hardware path (Pico port discovery, flashing via `mpremote`, on-board current monitor, logic analyzer via `sigrok-cli`, camera, `hands doctor`, `hands bringup`, `hands run --real`) is implemented and unit-tested against fakes. **It has not yet been run on a physical board.** |
-> | **Not done yet** | **No real model has been run end to end.** Every demo uses the scripted model (canned replies). The Claude and Ollama adapters are implemented and tested against a fake server only. **No user-study participants yet.** The protocol is written; no sessions have been run. |
+> | **Not done yet** | **No real model has been run end to end.** Every demo uses the scripted model (canned replies). The Claude path (streaming, forced tool use, retries) runs end to end against a local fake of the Messages API through the real SDK, and `make demo-live` is ready for a real key; the Ollama/OpenAI-compatible path is tested against a fake server too. **No user-study participants yet.** The protocol is written; no sessions have been run. |
 
 Everything below is written to match that status. Where a number comes from the simulator, it
 says so.
@@ -346,7 +346,7 @@ hands check steelers --final   # ...and on the approved v2
    hands run steelers --real                      # free: scripted model, you answer yes/no check questions
    hands run steelers --real --camera prompt      # give phone photos for the photo checks
    hands run steelers --real --model ollama --vision-model ollama:qwen2.5vl:7b   # free local models
-   hands run "a night light that turns on when it's dark" --real --model anthropic
+   hands run "a doorbell: pressing the button sounds the buzzer" --real --model anthropic
    ```
    To follow along on a phone: `hands guide steelers --web --host 0.0.0.0`. The page shows a
    diagram for each step, a progress bar and photo upload, and keeps a large red "do not plug
@@ -430,11 +430,11 @@ not significance claims.
   bring-up, for example around mpremote timing, sigrok CSV quirks, or how the helper's soft timer
   behaves next to a busy program.
 - **No real model evaluated end to end.** The scripted model's designs, firmware and test plans
-  are canned per gadget. The Claude and Ollama paths are tested only against a fake server.
-- **Datasheet numbers are not yet re-verified.** The RP2040/RP2350 pad-current and total-current
-  limits, and the section numbers cited in `docs/safety.md`, were written from memory during
-  development. They are conservative, but they have to be checked against the current
-  datasheets before anyone relies on them.
+  are canned per gadget. The Claude and Ollama paths are tested only against local fake servers;
+  `hands eval` (20 held-out specs) is ready but has no published numbers until it is run with a key.
+- **Two datasheet numbers are not re-verified.** Every other limit in `docs/safety.md` now cites
+  the official PDF with its exact wording. The RP2040 total GPIO current (50 mA) and all RP2350
+  (Pico 2 W) limits are kept as conservative caps but could not be re-checked from here.
 - **The simulator is idealised.** DC nodal analysis with piecewise-linear diodes and transistor
   switches: no timing-accurate I2C or PWM electrically, no contact resistance, ESD or heat. The
   simulated camera is perfect unless told to miss.
