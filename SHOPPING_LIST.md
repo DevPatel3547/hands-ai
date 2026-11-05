@@ -1,6 +1,6 @@
 # Hands starter kit: shopping list
 
-All prices are **approximate** (USD, typical US online prices in late 2026) and change often.
+All prices are **approximate** (USD, typical US online listings; not re-checked against a store) and change often.
 No specific stores are listed: paste the search term into whatever retailer you use, and check
 the listing photos and specs against the column "Make sure".
 
@@ -32,6 +32,11 @@ run with the free scripted model, and free local models work through Ollama.
   10 minutes with help; (c) a basic soldering kit costs about $15–20 extra. Until it's soldered you
   can run everything except current sensing: the agent then has to rely on photos and the logic
   analyzer.
+- **Check your breadboard's power rails.** On many 830-point boards the red and blue lines along
+  the edges have a **gap in the middle** (around column 30): the two halves of each rail are not
+  connected. If yours does, add a short jumper across each gap (4 jumpers) before you start, or
+  parts on the far half get no power. Look closely at the printed lines, or test with the
+  `hands bringup` LED check.
 - **Pin orders differ between clones** (INA219 and OLED in particular). Before wiring, compare the
   labels printed on your board with `pins:` in `hands/data/starter_kit.yaml` and edit the YAML if
   they differ. The wiring guide is generated from that order.

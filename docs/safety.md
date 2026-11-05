@@ -32,10 +32,30 @@ Regression tests for every gate are in `tests/test_gates.py` and `tests/test_saf
 
 ## Hard limits and their sources
 
-> **Verification status.** The values and section numbers below were written from memory of
-> the RP2040, RP2350, Pico W and part datasheets during development. They were chosen to be
-> conservative, but they **have not yet been re-checked line by line against the current
-> PDFs**. Do that before relying on them, especially for the Pico 2 W (RP2350).
+> **Verification status (2026-11-04).** Each number was re-checked against the current
+> official PDF where one could be fetched. The table below says, for every number, whether it
+> was verified, with the exact wording. The limits in the next table are unchanged: every check
+> either confirmed them or found them conservative. Two items remain **not re-verified** and are
+> marked so; treat them as conservative engineering choices, not datasheet quotes.
+
+| Number used by Hands | Status | Source and exact wording |
+|---|---|---|
+| 3V3(OUT) load < 300 mA | **verified** | [Pico W datasheet](https://datasheets.raspberrypi.com/picow/pico-w-datasheet.pdf), pin descriptions: "it is recommended to keep the load on this pin under 300 mA". |
+| GP23, GP24, GP25, GP29 are internal on Pico W | **verified** | Pico W datasheet: GPIO29 "wireless SPI CLK/ADC mode (ADC3) to measure VSYS/3"; GPIO25 "wireless SPI CS"; GPIO24 "wireless SPI data/IRQ"; GPIO23 "wireless power on signal". |
+| ADC pins GP26-29 must not exceed 3.3 V | **verified** | Pico W datasheet: "GPIO 26-29 are ADC-capable and have an internal reverse diode to the IOVDD (3.3 V) rail, so the input voltage must not exceed IOVDD plus about 300 mV." |
+| VSYS 1.8-5.5 V, VBUS to VSYS via a Schottky diode | **verified** | Pico W datasheet: "VSYS ... can vary in the allowed range 1.8 V to 5.5 V"; "VBUS is the 5 V input from the micro-USB port, which is fed through a Schottky diode to generate VSYS." |
+| GPIO drive strengths 2/4/8/12 mA | **verified** | [pico-sdk `hardware/gpio.h`](https://github.com/raspberrypi/pico-sdk/blob/master/src/rp2_common/hardware_gpio/include/hardware/gpio.h): `GPIO_DRIVE_STRENGTH_2MA` ... `GPIO_DRIVE_STRENGTH_12MA`, "12 mA nominal drive strength". Hands caps a pin at the highest setting. |
+| IOVDD 1.8-3.3 V; all digital IO share one supply | **verified** | [RP2040 datasheet](https://datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf) §2.9.1: "IOVDD ... should be powered at a nominal voltage between 1.8V and 3.3V ... All digital IOs share the same power supply". |
+| Total GPIO current 50 mA | **not re-verified** | The RP2040 datasheet's electrical chapter (§5.5) could not be retrieved in full from the build environment. 50 mA is the commonly cited IOVDD total; Hands keeps it as a conservative cap. Check §5.5 before relying on it. |
+| RP2350 (Pico 2 W) limits | **not re-verified** | Hands applies the RP2040 numbers to both chips. |
+| INA219 supply 3-5.5 V (abs. max 6 V); IN± common mode −0.3 to 26 V | **verified** | [TI INA219 datasheet, rev. G](https://www.ti.com/lit/ds/symlink/ina219.pdf) §7.1 and §7.5: "VS Supply voltage 6 V"; "Operating supply range 3 5.5 V"; "Common-mode ... −0.3 26 V". |
+| INA219 PGA /8 = ±320 mV; shunt LSB 10 µV; bus LSB 4 mV, shifted right 3 bits | **verified** | INA219 §7.5 table ("PGA = /8 ... ±320 mV", "Shunt voltage, 1 LSB step size 10 μV", "Bus voltage, 1 LSB step size 4 mV") and §8.5.1 ("Bus Voltage Register contents must be shifted right by three bits"). |
+| INA219 address 0x40 with A0 = A1 = GND | **verified** | INA219 Table 1: "GND GND 1000000". |
+| PN2222A: E-B-C pinout, Ic 1.0 A abs. max, hFE ≥ 75 at 10 mA, VBE(sat) ≤ 1.2 V at 150 mA | **verified** | [onsemi PN2222A datasheet](https://www.onsemi.com/pdf/datasheet/pn2222a-d.pdf): "IC Collector Current 1.0 A"; TO-92 marked "EBC"; hFE "IC = 10 mA, VCE = 10 V 75"; VBE(sat) "0.6 1.2" at IC = 150 mA, IB = 15 mA. Hands derates Ic to 600 mA. |
+| DHT22 / AM2302 supply 3.3-6 V, ~1.5 mA measuring | **verified** | [Aosong AM2302 datasheet](https://cdn-shop.adafruit.com/datasheets/Digital+humidity+and+temperature+sensor+AM2302.pdf): "Power's voltage should be 3.3-5.5V DC"; table min 3.3 / max 6 V; "Current supply Measuring 1 1.5 mA". Hands uses 3.3-6 V for the module and 1.5 mA. |
+| SSD1306 I2C address 0x3C | **verified** | [Solomon SSD1306 datasheet](https://cdn-shop.adafruit.com/datasheets/SSD1306.pdf) §8.1.5: slave address "0111100" (0x3C) or "0111101" (0x3D) via SA0. The chip's logic VDD is 1.65-3.3 V; 3.3-5 V *modules* add a regulator, and their pull-ups go to the module VCC, which is why Hands powers them from 3V3. |
+| SG90 stall current 650 mA | engineering assumption | No manufacturer datasheet gives stall current; measured reports vary from ~360 to ~750 mA. Hands assumes the high end and warns. |
+| LED Vf min 1.8-1.9 V | engineering assumption | Typical 5 mm indicator LED datasheets; a lower Vf gives more current, so the minimum is the safe bound. |
 
 | Limit | Value | Source |
 |-------|-------|--------|
