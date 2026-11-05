@@ -18,7 +18,6 @@ imported from it, and no ngspice Python wrapper is needed.
 
 from __future__ import annotations
 
-import itertools
 import math
 import os
 import platform
@@ -135,7 +134,10 @@ def run_ngspice(netlist: str, *, timeout: float = 60.0, ngspice: str | None = No
         if not raw.exists():
             tail = " | ".join((proc.stdout + proc.stderr).strip().splitlines()[-6:])
             raise SpiceError(f"ngspice produced no operating point (exit {proc.returncode}): {tail}")
-        vectors = parse_raw(raw.read_text(encoding="ascii", errors="replace"))
+        try:
+            vectors = parse_raw(raw.read_text(encoding="ascii", errors="replace"))
+        except (ValueError, IndexError) as e:
+            raise SpiceError(f"could not parse the ngspice output: {e}") from e
     if not vectors:
         raise SpiceError("ngspice operating point was empty")
     return vectors
@@ -158,6 +160,8 @@ def parse_raw(text: str) -> dict[str, float]:
                 names.append(parts[1].lower())
             i += n
         elif line.startswith("Values:"):
+            if not names:
+                break
             vals: list[float] = []
             for raw_line in lines[i + 1 :]:
                 tok = raw_line.split()
@@ -166,6 +170,8 @@ def parse_raw(text: str) -> dict[str, float]:
                 vals.append(float(tok[-1]))
                 if len(vals) == len(names):
                     break
+            if len(vals) != len(names):
+                raise ValueError(f"rawfile has {len(names)} variables but {len(vals)} values")
             out.update(zip(names, vals, strict=True))
             break
         i += 1
@@ -434,8 +440,8 @@ def _emit_design_copy(
 ) -> _Copy:
     p = f"c{ci}"
     node_of_net: dict[str, str] = {}
-    for k, name in enumerate(sorted(full.nets)):
-        node_of_net[name] = "0" if name == "GND" else f"{p}n{k}"
+    for idx, name in enumerate(sorted(full.nets)):
+        node_of_net[name] = "0" if name == "GND" else f"{p}n{idx}"
 
     def node(ref: str) -> str:
         n = full.net_of(ref)

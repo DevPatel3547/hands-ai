@@ -73,6 +73,14 @@ def led_current(v_avail: float, r_ohms: float, vf_at_20ma: float) -> float:
     return lo
 
 
+def led_pwl(vf_at_20ma: float, i_lo: float = 0.005) -> tuple[float, float]:
+    """(knee voltage, slope ohms) of the straight line through the model at ``i_lo`` and 20 mA:
+    the piecewise-linear LED ``hands/sim/mna.py`` uses, fitted to the same curve as SPICE."""
+    v_lo, v_hi = led_vf(i_lo, vf_at_20ma), led_vf(LED_I_REF, vf_at_20ma)
+    rd = (v_hi - v_lo) / (LED_I_REF - i_lo)
+    return v_hi - LED_I_REF * rd, rd
+
+
 def led_model(name: str, vf_at_20ma: float) -> str:
     return f".model {name} D(IS={led_is(vf_at_20ma):.6e} N={LED_N} RS={LED_RS})"
 
@@ -117,5 +125,6 @@ __all__ = [
     "led_current",
     "led_is",
     "led_model",
+    "led_pwl",
     "led_vf",
 ]

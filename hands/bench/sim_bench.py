@@ -15,8 +15,17 @@ INA_SDA, INA_SCL = 26, 27
 class SimBench:
     mode = "sim"
 
-    def __init__(self, inv: Inventory, build: Build, env: SimEnv | None = None, vision_miss: set[str] | None = None):
-        self.board = SimBoard(inv, build, env)
+    engine = "cpython-stub"  # firmware runs in CPython with stand-in MicroPython modules (hands/sim/runtime.py)
+
+    def __init__(
+        self,
+        inv: Inventory,
+        build: Build,
+        env: SimEnv | None = None,
+        vision_miss: set[str] | None = None,
+        solver: str = "mna",
+    ):
+        self.board = SimBoard(inv, build, env, solver=solver)
         self.serial = SerialPort()
         self.runner: FirmwareRunner | None = None
         self.vision_miss = set(vision_miss or ())

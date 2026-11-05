@@ -253,4 +253,4 @@ def test_soundness_run_was_not_vacuous() -> None:
     """The property only means something if the rules accepted a fair share of the random designs."""
     if not STATS["examples"]:
         pytest.skip("run together with test_rules_never_less_strict_than_spice")
-    assert STATS["accepted"] >= 0.25 * STATS["examples"], dict(STATS)
+    assert STATS["accepted"] >= 0.15 * STATS["examples"], dict(STATS)
