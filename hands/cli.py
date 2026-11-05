@@ -13,8 +13,17 @@ from .metrics import DEFAULT_LOG, study_report, summary_report
 
 MODEL_HELP = (
     "scripted (default, offline, built-in gadgets only) | anthropic[:MODEL] (ANTHROPIC_API_KEY) | "
-    "ollama[:MODEL] (free, local) | openai:MODEL (+ --base-url for any OpenAI-compatible server)"
+    "ollama[:MODEL] (free, local) | openai:MODEL (+ --base-url for any OpenAI-compatible server) | "
+    "replay:FILE (a session recorded with --record; no model is called)"
 )
+
+
+def _record_path(record: str | None, gadget: str, n: int) -> str | None:
+    """With several gadgets, ``--record x.jsonl`` becomes ``x-<gadget>.jsonl``."""
+    if not record or n == 1:
+        return record
+    p = Path(record)
+    return str(p.with_name(f"{p.stem}-{gadget}{p.suffix or '.jsonl'}"))
 
 
 def _faults(s: str | None) -> list[str] | None:
@@ -53,7 +62,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     def model_args(p: argparse.ArgumentParser) -> None:
         p.add_argument("--model", default="scripted", help=MODEL_HELP)
-        p.add_argument("--base-url", help="OpenAI-compatible base URL (default for ollama: http://localhost:11434/v1)")
+        p.add_argument(
+            "--base-url", help="API base URL (ollama default http://localhost:11434/v1; anthropic: ANTHROPIC_BASE_URL)"
+        )
+        p.add_argument("--record", metavar="FILE", help="save every model reply to a replay file (real models only)")
 
     d = sub.add_parser("demo", help="run a gadget end-to-end on the simulated bench")
     d.add_argument("gadget", help="steelers | tempdisplay | servo | all")
@@ -120,6 +132,7 @@ def build_parser() -> argparse.ArgumentParser:
     grp = dr.add_mutually_exclusive_group()
     grp.add_argument("--sim", action="store_true", help="only what the simulator needs")
     grp.add_argument("--real", action="store_true", help="treat real-bench items as required")
+    grp.add_argument("--live", action="store_true", help="check a live Claude run: SDK, key (free check), model")
     dr.add_argument("--port", default="auto")
     dr.add_argument("--json", action="store_true")
 
@@ -128,6 +141,12 @@ def build_parser() -> argparse.ArgumentParser:
     bu.add_argument("--camera", help="webcam index/path, or 'prompt'")
     bu.add_argument("--skip", default="", help="comma list of steps to skip: led,ina,logic,camera")
     bu.add_argument("--metrics", default=str(DEFAULT_LOG))
+
+    ev = sub.add_parser("eval", help="run the held-out spec suite through every gate with a real model")
+    ev.add_argument("--only", help="comma list of spec ids (default: all; see hands/data/eval_specs.yaml)")
+    ev.add_argument("--specs", help="another eval spec YAML file")
+    ev.add_argument("--out", help="write the JSON report here (a .md summary is written next to it)")
+    model_args(ev)
 
     sub.add_parser("faults", help="list injectable simulated mistakes")
     sub.add_parser("inventory", help="show the parts inventory")
@@ -223,6 +242,7 @@ def _dispatch(a: argparse.Namespace) -> int:
                 model=a.model,
                 base_url=a.base_url,
                 participant=a.participant,
+                record=_record_path(a.record, gid, len(ids)),
             )
             ok &= res.success
             print()
@@ -241,6 +261,7 @@ def _dispatch(a: argparse.Namespace) -> int:
             metrics_path=a.metrics,
             participant=a.participant,
             uhubctl=a.uhubctl.split() if a.uhubctl else None,
+            record=a.record,
         )
         return 0 if res.success else 1
 
@@ -362,7 +383,8 @@ def _dispatch(a: argparse.Namespace) -> int:
     if a.cmd == "doctor":
         from .doctor import as_json, exit_code, render, run_checks
 
-        checks = run_checks(mode="sim" if a.sim else "real" if a.real else "all", port=a.port)
+        mode = "sim" if a.sim else "real" if a.real else "live" if a.live else "all"
+        checks = run_checks(mode=mode, port=a.port)
         print(json.dumps(as_json(checks), indent=2) if a.json else render(checks))
         return exit_code(checks)
 
@@ -378,6 +400,24 @@ def _dispatch(a: argparse.Namespace) -> int:
             skip={s.strip() for s in a.skip.split(",") if s.strip()},
         )
         return 0 if all(r.status != "FAIL" for r in steps) else 1
+
+    if a.cmd == "eval":
+        from .eval import load_specs, render_markdown, run_eval
+
+        if a.record:
+            raise SystemExit("--record is for demo/run; hands eval always writes its own report (--out)")
+        cases = load_specs(a.specs, _faults(a.only) or None)
+        print(f"#### hands eval: {len(cases)} specs, model {a.model}")
+        report = run_eval(a.model, cases=cases, base_url=a.base_url)
+        md = render_markdown(report)
+        print("\n" + md)
+        if a.out:
+            out = Path(a.out)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+            out.with_suffix(".md").write_text(md + "\n", encoding="utf-8")
+            print(f"\nwrote {out} and {out.with_suffix('.md')}")
+        return 0 if report["summary"]["pass_rate"] == 1.0 else 1
 
     if a.cmd == "faults":
         from .sim.build import FAULT_KINDS, INVISIBLE
