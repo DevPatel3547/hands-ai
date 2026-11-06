@@ -9,6 +9,7 @@ from ..inventory import Inventory
 from ..layout import pico_hole, strip_of
 from . import mna
 from .build import Build
+from .spice_models import led_pwl
 
 GPIO_R_OUT = 40.0  # ohms, approx RP2040 output impedance
 PULL_R = 50e3  # internal pull-up/down
@@ -43,7 +44,10 @@ class OledState:
 
 
 class SimBoard:
-    def __init__(self, inv: Inventory, build: Build, env: SimEnv | None = None):
+    def __init__(self, inv: Inventory, build: Build, env: SimEnv | None = None, solver: str = "mna"):
+        if solver not in ("mna", "spice"):
+            raise ValueError("solver must be 'mna' or 'spice'")
+        self.solver = solver  # "spice": operating points from ngspice (hands/sim/spice.py), cached per state
         self.inv = inv
         self.build = build
         self.env = env or SimEnv()
@@ -173,7 +177,8 @@ class SimBoard:
             if k == "resistor":
                 c.res.append(mna.Res(nd("1"), nd("2"), float(pt.get("ohms")), inst))
             elif k == "led":
-                c.diodes.append(mna.Diode(nd("anode"), nd("cathode"), float(pt.get("vf", 2.0)), 15.0, inst))
+                knee, rd = led_pwl(float(pt.get("vf", 2.0)))  # fitted to the SPICE LED model
+                c.diodes.append(mna.Diode(nd("anode"), nd("cathode"), knee, rd, inst))
             elif k == "buzzer":
                 c.diodes.append(mna.Diode(nd("plus"), nd("minus"), 0.3, 120.0, inst))
             elif k == "npn":
@@ -208,7 +213,12 @@ class SimBoard:
         self._topology()
         key = key or self.state_key()
         if key not in self._cache:
-            self._cache[key] = mna.solve(self._circuit(key))
+            if self.solver == "spice":
+                from .spice import solve_board
+
+                self._cache[key] = solve_board(self, key)
+            else:
+                self._cache[key] = mna.solve(self._circuit(key))
         return self._cache[key]
 
     def check_power(self) -> None:

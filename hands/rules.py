@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -33,11 +34,22 @@ from .circuit import (
     with_fixture,
 )
 from .inventory import Inventory, PartType
+from .sim import spice_models as M
 
 V_GPIO = 3.3
 POWER_PINS = {"pico.GND": 0.0, "pico.AGND": 0.0, "pico.3V3": 3.3, "pico.VBUS": 5.0, "pico.VSYS": 5.0}
 LED_DIRECT_MA = 40.0  # stand-in for "unlimited" when an LED/base has no resistor
 TWO_PIN_KINDS = ("led", "resistor", "buzzer", "button")
+
+# Worst-case electrical envelope. Every current estimate below uses these, not nominal values, so
+# the rules stay at least as strict as the ngspice tolerance corners in hands/sim/spice.py (checked
+# by tests/test_rules_soundness.py). Sources: hands/sim/spice_models/__init__.py.
+V_LO = {0.0: 0.0, 3.3: M.V3V3_RANGE[0], 5.0: M.VBUS_RANGE[0]}
+V_HI = {0.0: 0.0, 3.3: M.V3V3_RANGE[1], 5.0: M.VBUS_RANGE[1]}
+V_GPIO_HI = M.V3V3_RANGE[1]  # a GPIO driven high sits at IOVDD = the 3V3 rail
+R_MIN = 1 - M.R_TOL  # resistor at the low end of its tolerance (more current)
+R_MAX = 1 + M.R_TOL
+VBE_MIN = 0.6  # PN2222A base-emitter drop at small base currents (lower = more base current)
 
 #: Every rule id the checker can emit, in the order they run.
 RULE_IDS = (
@@ -178,13 +190,45 @@ class _Ctx:
         return None
 
     def vrange(self, net: str | None) -> Range | None:
-        """Voltage range a net can take: fixed rails, GPIO 0..3.3 V, else unknown."""
+        """Worst-case voltage range of a net: rails with their tolerance, GPIO 0..IOVDD(max),
+        the collector of a grounded-emitter NPN 0..VBUS(max), else unknown (None)."""
         v = self.voltage(net)
         if v is not None and v == v:
-            return (v, v)
+            return (V_LO.get(v, v), V_HI.get(v, v))
         if self.gpios(net):
-            return (0.0, V_GPIO)
+            return (0.0, V_GPIO_HI)
+        for p in self.pins(net):
+            r = PinRef.parse(p)
+            if self.kind(r.inst) == "npn" and r.pin == "c" and self.is_gnd(self.net_of.get(f"{r.inst}.e")):
+                return (0.0, M.VBUS_RANGE[1])
         return None
+
+    def hull(self, net: str | None) -> Range | None:
+        """Voltage range ``net`` can be pulled to: the envelope of every fixed/GPIO net reachable
+        through any part (conservative: multi-pin parts connect all their pins)."""
+        if net is None:
+            return None
+        own = self.vrange(net)
+        if own is not None:
+            return own
+        lo, hi, seen, todo = math.inf, -math.inf, {net}, [net]
+        while todo:
+            n = todo.pop()
+            for p in self.pins(n):
+                inst = PinRef.parse(p).inst
+                if inst == "pico":
+                    continue
+                for q in self.d.pins_of(inst):
+                    n2 = self.net_of.get(q)
+                    if n2 is None or n2 in seen:
+                        continue
+                    seen.add(n2)
+                    rg = self.vrange(n2)
+                    if rg is not None:
+                        lo, hi = min(lo, rg[0]), max(hi, rg[1])
+                    else:
+                        todo.append(n2)
+        return (lo, hi) if lo <= hi else None
 
     def is_gnd(self, net: str | None) -> bool:
         return self.voltage(net) == 0.0
@@ -381,6 +425,37 @@ def _shorted_parts(c: _Ctx) -> list[Finding]:
                         [inst],
                     )
                 )
+    # Several buttons can short supplies together when pressed at once (GPIO -> sw1 -> 3V3 and
+    # GPIO -> sw2 -> GND). Join every net the buttons can connect and look for two supplies.
+    parent: dict[str, str] = {}
+
+    def find(x: str) -> str:
+        while parent.get(x, x) != x:
+            x = parent[x]
+        return x
+
+    for inst in c.parts:
+        if c.kind(inst) == "button":
+            na, nb = c.net_of.get(f"{inst}.a"), c.net_of.get(f"{inst}.b")
+            if na and nb:
+                parent[find(na)] = find(nb)
+    groups: dict[str, set[float]] = {}
+    for net in set(parent) | set(parent.values()):
+        v = c.voltage(net)
+        if v is not None and v == v:
+            groups.setdefault(find(net), set()).add(v)
+    for root, vs in groups.items():
+        if len(vs) > 1 and not any(f.rule == "shorted_part" and "short the supply" in f.message for f in out):
+            insts = sorted(i for i in c.parts if c.kind(i) == "button" and find(c.net_of.get(f"{i}.a", "")) == root)
+            out.append(
+                Finding(
+                    "shorted_part",
+                    "error",
+                    f"pressing {' and '.join(insts)} together would short {' and '.join(f'{v:g} V' for v in sorted(vs))}"
+                    f" (buttons on one net go to different supplies). Wire every button between a GPIO and GND.",
+                    insts,
+                )
+            )
     return out
 
 
@@ -463,21 +538,56 @@ def _series_r(c: _Ctx, inst: str, net: str) -> tuple[float, Range | None] | None
     return c.fact(r, "ohms", 0.0), c.vrange(c.far_net(rs[0]))
 
 
+def resistor_path(c: _Ctx, net: str | None, came: set[str], depth: int = 0) -> tuple[float, Range] | None:
+    """Follow resistors from ``net`` (arriving through the parts in ``came``) to a net of known
+    voltage. Allowed: resistors in series (a chain) and in parallel (a bank between the same two
+    nets). Returns (nominal ohms, terminal voltage range), or None if the network branches."""
+    if net is None:
+        return None
+    rg = c.vrange(net)
+    if rg is not None:
+        return 0.0, rg
+    others = [p for p in c.pins(net) if PinRef.parse(p).inst not in came]
+    if not others or depth > 6:
+        return None
+    if any(c.kind(PinRef.parse(p).inst) != "resistor" for p in others):
+        return None
+    fars = {c.far_net(p) for p in others}
+    if len(fars) != 1:
+        return None
+    far = fars.pop()
+    if far is None or far == net:
+        return None
+    ohms = [c.fact(PinRef.parse(p).inst, "ohms", 0.0) for p in others]
+    if min(ohms) <= 0:
+        return None
+    sub = resistor_path(c, far, {PinRef.parse(p).inst for p in others}, depth + 1)
+    if sub is None:
+        return None
+    return 1 / sum(1 / o for o in ohms) + sub[0], sub[1]
+
+
 def led_worst_ma(c: _Ctx, inst: str) -> float | None:
-    """Worst-case LED current (minimum Vf), or None if the circuit around it is not a simple series path."""
+    """Worst-case LED current: highest anode-side and lowest cathode-side voltage, resistors at
+    -5 %, the LED model fitted to the minimum forward voltage (``spice_models.led_current``).
+    None if the circuit around the LED is not a resistor path to known voltages on both sides."""
     a, k = c.led_pins(inst)
-    vf = c.fact(inst, "vf_min", c.fact(inst, "vf", 2.0))
-    ra, rk = c.vrange(a), c.vrange(k)
-    sa, sk = (_series_r(c, inst, a) if a else None), (_series_r(c, inst, k) if k else None)
-    if sa and rk:
-        ohms, far = sa
-        if far and ohms > 0:
-            return max(far[1] - rk[0] - vf, 0.0) / ohms * 1000
-    if sk and ra:
-        ohms, far = sk
-        if far and ohms > 0:
-            return max(ra[1] - far[0] - vf, 0.0) / ohms * 1000
-    return None
+    pa = resistor_path(c, a, {inst})
+    pk = resistor_path(c, k, {inst})
+    if pa is None or pk is None:
+        return None
+    v = pa[1][1] - pk[1][0]
+    vf20 = c.fact(inst, "vf_min", c.fact(inst, "vf", 2.0))
+    r = (pa[0] + pk[0]) * R_MIN
+    if r <= 0:
+        return LED_DIRECT_MA if v > vf20 - 0.4 else 0.0
+    return M.led_current(v, r, vf20) * 1000
+
+
+def buzzer_ma(c: _Ctx, inst: str, volts: float) -> float:
+    """Upper bound of an active buzzer's current with ``volts`` across it."""
+    model = max(volts - M.BUZZER_VD + 0.05, 0.0) / M.BUZZER_R * 1000
+    return max(c.fact(inst, "current_ma", 25.0), model)
 
 
 def _led_current(c: _Ctx) -> list[Finding]:
@@ -485,9 +595,22 @@ def _led_current(c: _Ctx) -> list[Finding]:
     for inst in c.parts:
         if c.kind(inst) != "led":
             continue
+        a, k = c.led_pins(inst)
+        if a is None or k is None or a == k:
+            continue  # unconnected_pin / shorted_part report these
         i = led_worst_ma(c, inst)
         imax = c.fact(inst, "i_max_ma", 20.0)
-        if i is not None and i > imax:
+        if i is None:
+            out.append(
+                Finding(
+                    "led_current",
+                    "error",
+                    f"{inst}: Hands cannot bound this LED's current (its resistors do not lead straight to a "
+                    f"pin or rail). Use one resistor in series between the LED and a GPIO, 3V3, 5V or GND.",
+                    [inst],
+                )
+            )
+        elif i > imax:
             out.append(
                 Finding(
                     "led_current",
@@ -500,7 +623,7 @@ def _led_current(c: _Ctx) -> list[Finding]:
 
 
 def _gpio_load_ma(c: _Ctx, net: str) -> tuple[float, list[str]]:
-    """Estimated worst-case source/sink current of the GPIO on ``net``."""
+    """Worst-case source/sink current of the GPIO on ``net`` (pin high = IOVDD max, or low)."""
     total, why = 0.0, []
     for p in c.pins(net):
         r = PinRef.parse(p)
@@ -508,49 +631,70 @@ def _gpio_load_ma(c: _Ctx, net: str) -> tuple[float, list[str]]:
             continue
         k = c.kind(r.inst)
         if k == "resistor":
-            ohms = c.fact(r.inst, "ohms", 0.0)
+            ohms = c.fact(r.inst, "ohms", 0.0) * R_MIN
             on = c.far_net(p)
-            if on is None or ohms <= 0:
+            if on is None or ohms <= 0 or on == net:
                 continue
-            v = c.voltage(on)
-            if v is not None and v == v:
-                i = (V_GPIO if v == 0 else v) / ohms * 1000  # pin driven to the opposite level
-                total += i
-                why.append(f"{r.inst} to {'GND' if v == 0 else on} ~{i:.1f} mA")
-                continue
-            for q in c.pins(on):
-                qr = PinRef.parse(q)
-                qk = c.kind(qr.inst)
-                if qk == "led":
-                    vf = c.fact(qr.inst, "vf_min", c.fact(qr.inst, "vf", 2.0))
-                    other_v = c.voltage(c.far_net(q))
-                    if qr.pin == "anode":  # pin sources current into the LED
-                        i = max(V_GPIO - vf - (other_v if other_v is not None else 0.0), 0) / ohms * 1000
-                    else:  # pin sinks current from an LED whose anode sits on a rail
-                        i = max((other_v if other_v is not None else V_GPIO) - vf, 0) / ohms * 1000
-                    total += i
-                    why.append(f"{r.inst}+{qr.inst} ~{i:.1f} mA")
-                elif qk == "npn" and qr.pin == "b":
-                    i = (V_GPIO - c.fact(qr.inst, "vbe", 0.7)) / ohms * 1000
-                    total += i
-                    why.append(f"{qr.inst} base via {r.inst} ~{i:.1f} mA")
-                elif qk == "button":
-                    ov = c.voltage(c.far_net(q))
-                    if ov is not None and ov == ov:
-                        i = (V_GPIO if ov == 0 else ov) / ohms * 1000
-                        total += i
-                        why.append(f"{r.inst} via pressed {qr.inst} ~{i:.1f} mA")
+            i, what = _branch_ma(c, r.inst, on, ohms)
+            total += i
+            why.append(f"{r.inst} {what} ~{i:.1f} mA")
         elif k == "led":
             total += LED_DIRECT_MA
             why.append(f"{r.inst} directly on pin (unlimited, ~40+ mA)")
         elif k == "buzzer":
-            i = c.fact(r.inst, "current_ma", 25.0)
+            i = buzzer_ma(c, r.inst, V_GPIO_HI)
             total += i
             why.append(f"{r.inst} buzzer directly on pin ~{i:.0f} mA")
         elif k == "npn" and r.pin == "b":
             total += LED_DIRECT_MA
             why.append(f"{r.inst} base with no resistor (unlimited)")
+        elif k == "button":
+            i = V_GPIO_HI / M.PULL_OHMS * 1000  # input-only (firmware linter); the internal pull
+            total += i
+        else:
+            pt = c.ptype(r.inst)
+            if pt is not None and pt.get("pullup_onboard") and pt.pin(r.pin).role in ("signal", "i2c_sda", "i2c_scl"):
+                vcc = next((c.net_of.get(f"{r.inst}.{x.name}") for x in pt.pins if x.role == "power_in"), None)
+                rg = c.vrange(vcc)
+                pu = float(pt.get("pullup_ohms", M.DHT22_PULLUP_OHMS)) * R_MIN
+                if rg is not None:
+                    i = rg[1] / pu * 1000  # pin driven low against the module's pull-up
+                    total += i
+                    why.append(f"{r.inst} on-board pull-up ~{i:.1f} mA")
     return total, why
+
+
+def _branch_ma(c: _Ctx, rinst: str, on: str, ohms: float) -> tuple[float, str]:
+    """Worst current through a resistor (already at -5 %) from a GPIO to net ``on``."""
+    rg = c.vrange(on)
+    if rg is not None:
+        what = "to GND" if c.is_gnd(on) else ("to another GPIO" if c.gpios(on) else f"to {on}")
+        return max(V_GPIO_HI - rg[0], rg[1]) / ohms * 1000, what
+    others = [q for q in c.pins(on) if PinRef.parse(q).inst != rinst]
+    if len(others) == 1:
+        q = PinRef.parse(others[0])
+        qk = c.kind(q.inst)
+        if qk == "led":
+            far = resistor_path(c, c.far_net(others[0]), {q.inst})
+            if far is not None:
+                vf20 = c.fact(q.inst, "vf_min", c.fact(q.inst, "vf", 2.0))
+                r = ohms + far[0] * R_MIN
+                v = V_GPIO_HI - far[1][0] if q.pin == "anode" else far[1][1]
+                return M.led_current(v, r, vf20) * 1000, f"+{q.inst}"
+        elif qk == "npn" and q.pin == "b" and c.is_gnd(c.net_of.get(f"{q.inst}.e")):
+            return max(V_GPIO_HI - VBE_MIN, 0.0) / ohms * 1000, f"into {q.inst} base"
+        elif qk == "button":
+            brg = c.vrange(c.far_net(others[0]))
+            if brg is not None:
+                return max(V_GPIO_HI - brg[0], brg[1]) / ohms * 1000, f"via pressed {q.inst}"
+    resistance = resistor_path(c, on, {rinst})
+    if resistance is not None:
+        r2, rg2 = resistance
+        return max(V_GPIO_HI - rg2[0], rg2[1]) / (ohms + r2 * R_MIN) * 1000, "via a resistor chain"
+    h = c.hull(on)
+    if h is None:
+        return 0.0, "to nothing"
+    return max(V_GPIO_HI - h[0], h[1], 0.0) / ohms * 1000, "(worst case through the parts behind it)"
 
 
 def _gpio_current(c: _Ctx) -> tuple[dict[str, float], list[Finding]]:
@@ -577,10 +721,18 @@ def _gpio_current(c: _Ctx) -> tuple[dict[str, float], list[Finding]]:
                         "gpio_current", "warning", f"{g} carries ~{ma:.1f} mA (above the comfortable {warn:g} mA)", [g]
                     )
                 )
-    s = sum(per.values())
+    s = sum(per.values()) + _fixture_gpio_ma(c)
     if s > tot:
         out.append(Finding("gpio_current", "error", f"total GPIO current ~{s:.1f} mA exceeds {tot:g} mA"))
     return per, out
+
+
+def _fixture_gpio_ma(c: _Ctx) -> float:
+    """The bench INA219's I2C lines (GP26/GP27) sinking its on-board pull-ups."""
+    pt = c.ptype("ina")
+    if pt is None:
+        return 0.0
+    return 2 * V_GPIO_HI / (float(pt.get("pullup_ohms", 10e3)) * R_MIN) * 1000
 
 
 def _collector_load_ma(c: _Ctx, coll: str) -> float:
@@ -589,14 +741,19 @@ def _collector_load_ma(c: _Ctx, coll: str) -> float:
         r = PinRef.parse(p)
         k = c.kind(r.inst)
         if k == "buzzer":
-            total += c.fact(r.inst, "current_ma", 25.0)
+            rg = c.vrange(c.far_net(p))
+            total += buzzer_ma(c, r.inst, rg[1] if rg else M.VBUS_RANGE[1])
         elif k == "led":
             total += led_worst_ma(c, r.inst) or c.fact(r.inst, "i_max_ma", 20.0)
         elif k == "resistor":
-            v = c.voltage(c.far_net(p))
-            ohms = c.fact(r.inst, "ohms", 0.0)
-            if v and ohms > 0:
-                total += v / ohms * 1000
+            ohms = c.fact(r.inst, "ohms", 0.0) * R_MIN
+            on = c.far_net(p)
+            led_side = [q for q in c.pins(on) if c.kind(PinRef.parse(q).inst) == "led"] if on else []
+            if led_side:
+                continue  # counted with the LED above (its path reaches this collector)
+            path = resistor_path(c, on, {r.inst}) if on else None
+            if path is not None and ohms > 0:
+                total += path[1][1] / (ohms + path[0] * R_MIN) * 1000
     return total
 
 
@@ -873,6 +1030,37 @@ def _overvoltage(c: _Ctx) -> list[Finding]:
     return out
 
 
+def _resistor_worst_ma(c: _Ctx, inst: str) -> float | None:
+    """Worst current through resistor ``inst`` from what is on its two nets (None = unknown)."""
+    ohms = c.fact(inst, "ohms", 0.0)
+    na, nb = c.net_of.get(f"{inst}.1"), c.net_of.get(f"{inst}.2")
+    ra, rb = c.vrange(na), c.vrange(nb)
+    if ra and rb:
+        return max(abs(ra[1] - rb[0]), abs(rb[1] - ra[0])) / (ohms * R_MIN) * 1000
+    known, passive = (ra, nb) if ra else (rb, na)
+    if passive is None:
+        return 0.0
+    others = [q for q in c.pins(passive) if PinRef.parse(q).inst != inst]
+    leds = [q for q in others if c.kind(PinRef.parse(q).inst) == "led"]
+    if len(leds) == 1 and all(c.kind(PinRef.parse(q).inst) in ("led", "resistor") for q in others):
+        i = led_worst_ma(c, PinRef.parse(leds[0]).inst)
+        if i is not None:
+            return i  # this resistor is on the LED's series path: it carries at most the LED current
+    if known is not None:
+        path = resistor_path(c, passive, {inst})
+        if path is not None:
+            dv = max(abs(known[1] - path[1][0]), abs(path[1][1] - known[0]))
+            return dv / ((ohms + path[0]) * R_MIN) * 1000
+        if len(others) == 1:
+            q = PinRef.parse(others[0])
+            if c.kind(q.inst) == "npn" and q.pin == "b" and c.is_gnd(c.net_of.get(f"{q.inst}.e")):
+                return max(known[1] - VBE_MIN, 0.0) / (ohms * R_MIN) * 1000
+    h1, h2 = c.hull(na), c.hull(nb)
+    if h1 is None or h2 is None:
+        return 0.0
+    return max(abs(h1[1] - h2[0]), abs(h2[1] - h1[0])) / (ohms * R_MIN) * 1000
+
+
 def _resistor_power(c: _Ctx) -> list[Finding]:
     out = []
     pmax = c.lim["resistor_max_w"]
@@ -883,71 +1071,83 @@ def _resistor_power(c: _Ctx) -> list[Finding]:
         if ohms <= 0:
             out.append(Finding("resistor_power", "error", f"{inst} has no valid resistance in the inventory", [inst]))
             continue
-        ra, rb = c.vrange(c.net_of.get(f"{inst}.1")), c.vrange(c.net_of.get(f"{inst}.2"))
-        if ra and rb:
-            dv = max(abs(ra[1] - rb[0]), abs(rb[1] - ra[0]))
-            p = dv * dv / ohms
-            if p > pmax:
-                out.append(
-                    Finding(
-                        "resistor_power",
-                        "error",
-                        f"{inst} would dissipate ~{p * 1000:.0f} mW (> {pmax * 1000:.0f} mW)",
-                        [inst],
-                    )
+        i = _resistor_worst_ma(c, inst)
+        if i is None:
+            continue
+        # I^2 R with R at its high end: a conservative bound for every way the current was derived above
+        p = (i / 1000) ** 2 * ohms * R_MAX
+        if p > pmax:
+            out.append(
+                Finding(
+                    "resistor_power",
+                    "error",
+                    f"{inst} would dissipate ~{p * 1000:.0f} mW (> {pmax * 1000:.0f} mW)",
+                    [inst],
                 )
+            )
     return out
 
 
+def _rail_of(rg: Range | None) -> str | None:
+    if rg == (V_LO[3.3], V_HI[3.3]):
+        return "3V3"
+    if rg == (V_LO[5.0], V_HI[5.0]):
+        return "5V"
+    return None
+
+
 def _rail_budget(c: _Ctx, gpio_ma: dict[str, float]) -> tuple[dict[str, float], list[Finding]]:
+    """Worst-case load on the 3V3 regulator and on USB VBUS (rails at their tolerance highs)."""
     out: list[Finding] = []
     rails = {"3V3": 0.0, "5V": 0.0}
-    counted_leds: set[str] = set()
     for inst in c.parts:
         pt = c.ptype(inst)
         if pt is None or inst in FIXTURE_PARTS:
             continue
         if pt.kind == "led":
             a, _k = c.led_pins(inst)
-            src = c.voltage(a)
-            if src is None:  # anode through a resistor to a rail?
-                sr = _series_r(c, inst, a) if a else None
-                far = sr[1] if sr else None
-                src = far[0] if far and far[0] == far[1] and far[0] > 0 else None
-            if src in (3.3, 5.0):
-                rails["3V3" if src == 3.3 else "5V"] += led_worst_ma(c, inst) or 0.0
-                counted_leds.add(inst)
+            path = resistor_path(c, a, {inst})
+            key = _rail_of(path[1]) if path else None
+            if key:
+                rails[key] += led_worst_ma(c, inst) or 0.0
+            continue
+        if pt.kind == "resistor":
+            for end, other in (("1", "2"), ("2", "1")):
+                rg = c.vrange(c.net_of.get(f"{inst}.{end}"))
+                key = _rail_of(rg)
+                on = c.net_of.get(f"{inst}.{other}")
+                if key is None or on is None or c.gpios(on):  # GPIO ends are in the GPIO total
+                    continue
+                if _rail_of(c.vrange(on)) == key:
+                    continue
+                rails[key] += _resistor_worst_ma(c, inst) or 0.0
             continue
         for p in pt.pins:
             if p.role in ("power_in", "anode"):
-                v = c.voltage(c.net_of.get(f"{inst}.{p.name}"))
-                key = "3V3" if v == 3.3 else "5V" if v == 5.0 else None
+                key = _rail_of(c.vrange(c.net_of.get(f"{inst}.{p.name}")))
                 if key is None:
                     continue
                 if pt.kind == "servo":
                     rails[key] += float(pt.get("current_moving_ma", 250))
+                elif pt.kind == "buzzer":
+                    rails[key] += buzzer_ma(c, inst, V_HI[3.3 if key == "3V3" else 5.0])
                 else:
                     rails[key] += float(pt.get("current_ma", 0))
-    for inst in c.parts:  # resistors straight from a rail to GND (pull-ups, dividers)
-        if c.kind(inst) != "resistor":
-            continue
-        va, vb = c.voltage(c.net_of.get(f"{inst}.1")), c.voltage(c.net_of.get(f"{inst}.2"))
-        if va is not None and vb is not None and va == va and vb == vb and va != vb:
-            hi = max(va, vb)
-            rails["3V3" if hi == 3.3 else "5V"] += abs(va - vb) / c.fact(inst, "ohms", 1e9) * 1000
-    gpio_total = sum(gpio_ma.values())
+    gpio_total = sum(gpio_ma.values()) + _fixture_gpio_ma(c)
+    ina = c.ptype("ina")
+    fixture_ma = float(ina.get("current_ma", 0)) if ina else 0.0
+    reg = rails["3V3"] + gpio_total + fixture_ma
     lim3 = c.lim["rail_3v3_max_ma"]
-    if rails["3V3"] + gpio_total > lim3:
+    if reg > lim3:
         out.append(
             Finding(
                 "rail_budget",
                 "error",
-                f"3V3 regulator load ~{rails['3V3'] + gpio_total:.0f} mA (rail {rails['3V3']:.0f} + GPIO "
-                f"{gpio_total:.0f}) exceeds {lim3:g} mA",
+                f"3V3 regulator load ~{reg:.0f} mA (rail {rails['3V3']:.0f} + GPIO {gpio_total:.0f}) exceeds {lim3:g} mA",
             )
         )
     # Everything ultimately comes from the USB port: 5 V rail + the 3V3 regulator's input + the Pico itself.
-    vbus_total = rails["5V"] + (rails["3V3"] + gpio_total) * 3.3 / (5.0 * 0.85) + c.lim["pico_self_ma"]
+    vbus_total = rails["5V"] + reg * V_HI[3.3] / (V_LO[5.0] * M.REG_EFFICIENCY) + c.lim["pico_self_ma"]
     if vbus_total > c.lim["vbus_max_ma"]:
         out.append(
             Finding(

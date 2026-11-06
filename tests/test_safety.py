@@ -126,7 +126,9 @@ def test_led_sink_configuration_counted(inv):
     )
     rep = check_design(d, inv)
     assert rep.ok, rep.render()
-    assert rep.gpio_current_ma["GP2"] == pytest.approx((3.3 - 1.8) / 220 * 1000, rel=1e-3)
+    from hands.sim.spice_models import led_current  # worst case: 3V3 at 3.4 V, R -5 %, LED Vf curve
+
+    assert rep.gpio_current_ma["GP2"] == pytest.approx(led_current(3.4, 220 * 0.95, 1.8) * 1000, abs=0.01)
 
 
 def test_led_overcurrent_from_5v(inv, tmp_path):
