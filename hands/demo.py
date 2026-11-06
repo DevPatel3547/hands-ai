@@ -6,7 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from .agent import Engineer, RunResult
+from .agent import AgentConfig, Engineer, RunResult
 from .bench.sim_bench import SimBench
 from .gadgets import registry
 from .human import ConsoleHuman
@@ -48,6 +48,7 @@ def run_sim_demo(
     base_url: str | None = None,
     participant: str = "",
     record: str | Path | None = None,
+    spice: str = "off",
 ) -> RunResult:
     gadgets = registry()
     if live_llm:
@@ -74,7 +75,17 @@ def run_sim_demo(
         f"#### Injected human mistakes: {', '.join(faults) or 'none'}"
         + (f"; camera will miss: {', '.join(vision_miss)}" if vision_miss else "")
     )
-    eng = Engineer(inv, llm, bench, human, SimVision(), metrics, log=log, protocol=g.protocol if g else "none")
+    eng = Engineer(
+        inv,
+        llm,
+        bench,
+        human,
+        SimVision(),
+        metrics,
+        AgentConfig(spice=spice),
+        log=log,
+        protocol=g.protocol if g else "none",
+    )
     res = eng.run(spec)
     if res.success and g is not None and g.after_demo:
         g.after_demo(bench, log, res.layout)
@@ -122,6 +133,7 @@ def run_real(
     ask: Callable[[str], str] = input,
     bench: Any = None,
     record: str | Path | None = None,
+    spice: str = "auto",
 ) -> RunResult:
     """Full loop on real hardware: a person at the terminal is the hands."""
     from .bench.real_bench import RealBench
@@ -148,7 +160,9 @@ def run_real(
         f"camera: {'model vision' if vm else 'you answer questions'}]"
     )
     log("#### Low voltage only. Wire with USB unplugged. If anything gets hot or smells, unplug immediately.")
-    eng = Engineer(inv, llm, bench, human, vision, metrics, log=log, protocol=g.protocol if g else "none")
+    eng = Engineer(
+        inv, llm, bench, human, vision, metrics, AgentConfig(spice=spice), log=log, protocol=g.protocol if g else "none"
+    )
     res = eng.run(spec)
     log(f"\n#### Result: {'WORKING DEVICE' if res.success else 'FAILED: ' + res.reason}")
     return res

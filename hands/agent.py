@@ -91,6 +91,9 @@ class AgentConfig:
     max_firmware_attempts: int = 3
     max_plan_attempts: int = 2
     max_debug_rounds: int = 6
+    # Independent ngspice check of an approved design at tolerance corners:
+    # "off", "auto" (when ngspice is installed) or "require" (fail if it is not).
+    spice: str = "off"
 
 
 @dataclass
@@ -374,6 +377,43 @@ class Engineer:
         return RunResult(ok, self.design, self.layout, self.firmware, metrics, results, reason)
 
     # ============================================================= design
+    def _spice_check(self, design: Design) -> list[str]:
+        """Run ngspice at every tolerance corner; return error strings (empty = pass or skipped)."""
+        if self.cfg.spice == "off":
+            return []
+        from .sim import spice
+
+        if spice.find_ngspice() is None:
+            if self.cfg.spice == "require":
+                raise AgentFailure(f"SPICE check required but ngspice is missing: {spice.install_hint()}")
+            self.m.event("spice_check", skipped="ngspice not installed")
+            return []
+        try:
+            rep = spice.analyze_design(design, self.inv, corners="all")
+        except (spice.SpiceError, ValueError) as e:
+            self.m.event("spice_check", error=str(e)[:300])
+            if self.cfg.spice == "require":
+                raise AgentFailure(f"SPICE check failed to run: {e}") from e
+            self.log(f"   SPICE check could not run ({str(e)[:120]}); the rule check still applies")
+            return []
+        worst = {k: round(m.hi, 2) for k, m in rep.metrics.items() if k.startswith(("gpio", "rail"))}
+        self.m.event(
+            "spice_check",
+            ok=rep.ok,
+            engine=rep.engine,
+            points=rep.copies,
+            worst=worst,
+            violations=[str(f) for f in rep.violations],
+            seconds=round(rep.seconds, 2),
+        )
+        gt = rep.metrics.get("gpio_total")
+        self.log(
+            f"   SPICE check ({rep.engine}, {len(rep.corners)} corners x {rep.states_run} states): "
+            + ("PASS" if rep.ok else f"FAIL ({len(rep.violations)})")
+            + (f"; worst total GPIO current {gt.hi:.1f} mA" if gt else "")
+        )
+        return [f"{f} (found by the SPICE check)" for f in rep.violations]
+
     def stage_design(self) -> None:
         system = DESIGN_SYSTEM.format(inventory=self.inv.summary_for_prompt())
         reply = self.llm.complete(system, f"Gadget spec: {self.spec}", stage="design")
@@ -399,10 +439,19 @@ class Engineer:
                 f"-- Design v{attempt} '{design.name}': {len(design.parts)} parts, "
                 f"{len(design.nets)} nets\n" + _indent(report.render())
             )
-            if report.ok:
+            spice_errors = self._spice_check(design) if report.ok else []
+            if report.ok and not spice_errors:
                 self.design, self.report = design, report
                 self.layout = place(design, self.inv)  # gate 1 runs again inside place()
                 return
+            if spice_errors:  # the rules missed something SPICE found: fail closed, revise like a rule error
+                self.m.inc("design_errors_caught", len(spice_errors))
+                reply = self.llm.complete(
+                    system,
+                    REVISE_PROMPT.format(design=json.dumps(design.to_dict()), findings="\n".join(spice_errors)),
+                    stage="design_revise",
+                )
+                continue
             self.m.inc("design_errors_caught", len(report.errors))
             reply = self.llm.complete(
                 system,

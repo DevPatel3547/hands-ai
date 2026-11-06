@@ -49,6 +49,7 @@ V_HI = {0.0: 0.0, 3.3: M.V3V3_RANGE[1], 5.0: M.VBUS_RANGE[1]}
 V_GPIO_HI = M.V3V3_RANGE[1]  # a GPIO driven high sits at IOVDD = the 3V3 rail
 R_MIN = 1 - M.R_TOL  # resistor at the low end of its tolerance (more current)
 R_MAX = 1 + M.R_TOL
+FORCED_BETA_WARN = 15.0  # transistor warning threshold (Ic / Ib)
 VBE_MIN = 0.6  # PN2222A base-emitter drop at small base currents (lower = more base current)
 
 #: Every rule id the checker can emit, in the order they run.
@@ -801,7 +802,9 @@ def _transistor_rules(c: _Ctx) -> list[Finding]:
         rb = [(n2, ohms) for n2, ohms in c.across_resistor(b) if c.gpios(n2)] if b else []
         if rb and load > 0:
             ib = (V_GPIO - c.fact(inst, "vbe", 0.7)) / rb[0][1] * 1000
-            if ib < load / 10:
+            # PN2222A hFE is >= 75 at 10 mA (onsemi datasheet), so a forced beta up to ~15 still saturates
+            # hard; the datasheet's VCE(sat) is specified at 10. Warn only beyond that, not at 10.1.
+            if ib < load / FORCED_BETA_WARN:
                 out.append(
                     Finding(
                         "transistor",

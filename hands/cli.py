@@ -66,6 +66,12 @@ def build_parser() -> argparse.ArgumentParser:
             "--base-url", help="API base URL (ollama default http://localhost:11434/v1; anthropic: ANTHROPIC_BASE_URL)"
         )
         p.add_argument("--record", metavar="FILE", help="save every model reply to a replay file (real models only)")
+        p.add_argument(
+            "--spice",
+            choices=["auto", "off", "require"],
+            default="auto",
+            help="independent ngspice check of each approved design at tolerance corners (auto: if installed)",
+        )
 
     d = sub.add_parser("demo", help="run a gadget end-to-end on the simulated bench")
     d.add_argument("gadget", help="steelers | tempdisplay | servo | all")
@@ -243,6 +249,7 @@ def _dispatch(a: argparse.Namespace) -> int:
                 base_url=a.base_url,
                 participant=a.participant,
                 record=_record_path(a.record, gid, len(ids)),
+                spice=a.spice,
             )
             ok &= res.success
             print()
@@ -262,6 +269,7 @@ def _dispatch(a: argparse.Namespace) -> int:
             participant=a.participant,
             uhubctl=a.uhubctl.split() if a.uhubctl else None,
             record=a.record,
+            spice=a.spice,
         )
         return 0 if res.success else 1
 

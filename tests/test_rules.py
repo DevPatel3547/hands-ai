@@ -179,3 +179,24 @@ def test_inventory_facts(inv):
     assert inv.part("servo").get("v_min") == 4.8
     with pytest.raises(KeyError):
         inv.part("flux_capacitor")
+
+
+def test_hero_design_has_no_spurious_base_drive_warning(inv):
+    """1 kohm from a GPIO into a PN2222A switching a ~26 mA buzzer is a forced beta of ~10: no warning."""
+    from hands.circuit import Design
+    from hands.gadgets import registry
+    from hands.rules import check_design
+
+    rep = check_design(Design.from_dict(registry()["steelers"].designs[-1]), inv)
+    assert rep.ok and not [f for f in rep.warnings if f.rule == "transistor"]
+
+
+def test_weak_base_drive_still_warns(inv):
+    from hands.circuit import Design
+    from hands.gadgets import registry
+    from hands.rules import check_design
+
+    d = registry()["steelers"].designs[-1]
+    weak = dict(d, parts=dict(d["parts"], r2="resistor_10k"))
+    rep = check_design(Design.from_dict(weak), inv)
+    assert any(f.rule == "transistor" and f.severity == "warning" for f in rep.findings)
