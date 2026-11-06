@@ -56,6 +56,12 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+      - name: ngspice (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q ngspice
+      - name: ngspice (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ngspice
       - run: pip install -e ".[dev,mcp,llm]"
       - name: pytest (coverage gate 85%)
         run: pytest --cov=hands --cov-report=term-missing:skip-covered --cov-report=xml

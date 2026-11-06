@@ -113,7 +113,8 @@ disable_error_code = ["attr-defined", "assignment", "arg-type"]
 [[tool.mypy.overrides]]
 module = ["hands.safety", "hands.rules", "hands.circuit", "hands.fwlint", "hands.agent", "hands.llm",
           "hands.metrics", "hands.doctor", "hands.bringup", "hands.bench.real_bench", "hands.webui.server",
-          "hands.vision", "hands.inventory"]
+          "hands.vision", "hands.inventory", "hands.sim.spice", "hands.sim.spice_models", "hands.commands.twin",
+          "hands.eval", "hands.log"]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 disallow_any_generics = true

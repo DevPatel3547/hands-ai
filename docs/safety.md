@@ -108,6 +108,15 @@ Regression tests for every gate are in `tests/test_gates.py` and `tests/test_saf
 | `resistor_power` | A resistor dissipating more than 125 mW worst case |
 | `rail_budget` | 3V3 regulator load above 300 mA; total USB draw above 500 mA; warns on servo stall |
 
+## Independent check: SPICE
+
+Every rule's current estimate is checked against ngspice. `tests/test_rules_soundness.py`
+generates random in-kit designs and asserts that any design the rules accept stays inside the
+hard limits in SPICE across six tolerance corners (resistors ±5 %, 3V3 3.2-3.4 V, VBUS
+4.75-5.25 V, every GPIO high/low/floating, every button state). That test found five real holes
+where the rules were too permissive; all are fixed and listed in
+[`docs/digital-twin.md`](digital-twin.md) ("Findings"). `hands spice <gadget>` prints the table.
+
 ## Bypasses found in review (all fixed, all regression-tested)
 
 1. **Power through Pico pins.** A design could wire `pico.VSYS` or `pico.VBUS` into its own net, and those nets were not checked as rails. A design could also tie `pico.3V3_EN` or `pico.RUN` to GND. Now only `pico.GPn` may appear.
